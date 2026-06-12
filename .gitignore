@@ -95,3 +95,4 @@ desktop.ini
 # Databricks
 .databricks/
 databricks/.databricks/
+terraform/modules/lambda/placeholder/*.zip
