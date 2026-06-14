@@ -1,16 +1,16 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## BRONZE - MARKETPLACE RAW LOAD
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Load raw Olist seller CSV files into Bronze Delta tables as-is
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Load raw Olist seller CSV files into Bronze Delta tables as-is  
 # MAGIC **Note:** Marketplace domain uses same Olist source files as ecommerce
-# MAGIC           but creates separate Bronze tables for domain separation.
+# MAGIC           but creates separate Bronze tables for domain separation.  
 # MAGIC **Output:** acip.bronze.marketplace_sellers,
 # MAGIC             acip.bronze.marketplace_order_items,
-# MAGIC             acip.bronze.marketplace_products,
-# MAGIC             acip.bronze.marketplace_geolocations
+# MAGIC             acip.bronze.marketplace_products, 
+# MAGIC             acip.bronze.marketplace_geolocations 
 
 # COMMAND ----------
 

@@ -1,12 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## BRONZE - PHARMACY RAW LOAD
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Load raw Pharma Sales CSV files into Bronze Delta tables as-is
-# MAGIC **Output:** acip.bronze.pharma_sales_hourly, acip.bronze.pharma_sales_daily,
-# MAGIC             acip.bronze.pharma_sales_weekly, acip.bronze.pharma_sales_monthly
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Load raw Pharma Sales CSV files into Bronze Delta tables as-is  
+# MAGIC **Output:** acip.bronze.pharma_sales_hourly,  acip.bronze.pharma_sales_daily,
+# MAGIC   acip.bronze.pharma_sales_weekly,  acip.bronze.pharma_sales_monthly
 
 # COMMAND ----------
 
@@ -33,6 +33,9 @@ df = spark.read.csv(
     inferSchema=False
 )
 
+# Fix invalid column name - rename "Weekday Name" to "weekday_name"
+df = df.withColumnRenamed("Weekday Name", "weekday_name")
+
 row_count = df.count()
 col_count = len(df.columns)
 print(f"Rows: {row_count}, Columns: {col_count}")
@@ -56,6 +59,9 @@ df = spark.read.csv(
     header=True,
     inferSchema=False
 )
+
+# Fix invalid column name - rename "Weekday Name" to "weekday_name"
+df = df.withColumnRenamed("Weekday Name", "weekday_name")
 
 row_count = df.count()
 print(f"Rows: {row_count}")

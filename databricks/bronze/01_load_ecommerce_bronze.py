@@ -1,13 +1,13 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## BRONZE - ECOMMERCE RAW LOAD
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Load raw Olist CSV files into Bronze Delta tables as-is
-# MAGIC **Output:** acip.bronze.orders, acip.bronze.order_items,
-# MAGIC             acip.bronze.order_payments, acip.bronze.customers,
-# MAGIC             acip.bronze.products, acip.bronze.order_reviews,
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Load raw Olist CSV files into Bronze Delta tables as-is  
+# MAGIC **Output:** acip.bronze.orders, acip.bronze.order_items,  
+# MAGIC             acip.bronze.order_payments, acip.bronze.customers,  
+# MAGIC             acip.bronze.products, acip.bronze.order_reviews,   
 # MAGIC             acip.bronze.category_translations
 
 # COMMAND ----------
