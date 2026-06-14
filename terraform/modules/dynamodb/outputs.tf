@@ -10,3 +10,13 @@ output "table_names" {
     platform_dlq_status     = aws_dynamodb_table.platform_dlq_status.name
   }
 }
+
+output "anomaly_flags_stream_arn" {
+  description = "DynamoDB Stream ARN for anomaly flags table"
+  value       = aws_dynamodb_table.anomaly_flags.stream_arn
+}
+
+output "inventory_alerts_stream_arn" {
+  description = "DynamoDB Stream ARN for inventory alerts table"
+  value       = aws_dynamodb_table.inventory_alerts.stream_arn
+}

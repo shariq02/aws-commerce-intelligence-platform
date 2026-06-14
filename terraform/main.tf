@@ -63,9 +63,11 @@ module "iam" {
 }
 
 module "lambda" {
-  source             = "./modules/lambda"
-  project_name       = var.project_name
-  environment        = var.environment
-  lambda_role_arn    = module.iam.lambda_role_arn
-  sns_anomaly_arns   = module.sns.anomaly_topic_arns
+  source                      = "./modules/lambda"
+  project_name                = var.project_name
+  environment                 = var.environment
+  lambda_role_arn             = module.iam.lambda_role_arn
+  sns_anomaly_arns            = module.sns.anomaly_topic_arns
+  anomaly_flags_stream_arn    = module.dynamodb.anomaly_flags_stream_arn
+  inventory_alerts_stream_arn = module.dynamodb.inventory_alerts_stream_arn
 }

@@ -25,3 +25,11 @@ output "lambda_function_names" {
   description = "Lambda function names"
   value       = module.lambda.function_names
 }
+
+output "dynamodb_stream_arns" {
+  description = "DynamoDB Stream ARNs for Lambda triggers"
+  value = {
+    anomaly_flags    = module.dynamodb.anomaly_flags_stream_arn
+    inventory_alerts = module.dynamodb.inventory_alerts_stream_arn
+  }
+}

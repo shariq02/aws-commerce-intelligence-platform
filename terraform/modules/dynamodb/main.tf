@@ -18,9 +18,11 @@ resource "aws_dynamodb_table" "domain_realtime_metrics" {
 }
 
 resource "aws_dynamodb_table" "anomaly_flags" {
-  name         = "${var.project_name}-${var.environment}-anomaly-flags"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
+  name             = "${var.project_name}-${var.environment}-anomaly-flags"
+  billing_mode     = "PAY_PER_REQUEST"
+  hash_key         = "pk"
+  stream_enabled   = true
+  stream_view_type = "NEW_IMAGE"
 
   attribute {
     name = "pk"
@@ -34,9 +36,11 @@ resource "aws_dynamodb_table" "anomaly_flags" {
 }
 
 resource "aws_dynamodb_table" "inventory_alerts" {
-  name         = "${var.project_name}-${var.environment}-inventory-alerts"
-  billing_mode = "PAY_PER_REQUEST"
-  hash_key     = "pk"
+  name             = "${var.project_name}-${var.environment}-inventory-alerts"
+  billing_mode     = "PAY_PER_REQUEST"
+  hash_key         = "pk"
+  stream_enabled   = true
+  stream_view_type = "NEW_IMAGE"
 
   attribute {
     name = "pk"

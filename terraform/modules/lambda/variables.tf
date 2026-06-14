@@ -19,3 +19,13 @@ variable "sns_anomaly_arns" {
   description = "SNS topic ARNs per domain"
   type        = map(string)
 }
+
+variable "anomaly_flags_stream_arn" {
+  description = "DynamoDB Stream ARN for anomaly flags table"
+  type        = string
+}
+
+variable "inventory_alerts_stream_arn" {
+  description = "DynamoDB Stream ARN for inventory alerts table"
+  type        = string
+}

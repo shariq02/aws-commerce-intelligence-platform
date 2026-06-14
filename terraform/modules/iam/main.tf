@@ -40,7 +40,10 @@ resource "aws_iam_role_policy" "lambda_policy" {
           "dynamodb:GetShardIterator",
           "dynamodb:ListStreams"
         ]
-        Resource = "arn:aws:dynamodb:eu-central-1:${var.aws_account_id}:table/acip-*"
+        Resource = [
+          "arn:aws:dynamodb:eu-central-1:${var.aws_account_id}:table/acip-*",
+          "arn:aws:dynamodb:eu-central-1:${var.aws_account_id}:table/acip-*/stream/*"
+        ]
       },
       {
         Effect = "Allow"

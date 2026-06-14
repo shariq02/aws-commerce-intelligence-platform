@@ -96,3 +96,5 @@ desktop.ini
 .databricks/
 databricks/.databricks/
 terraform/modules/lambda/placeholder/*.zip
+
+src/flink/jars/*.jar
