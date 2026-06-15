@@ -71,3 +71,14 @@ module "lambda" {
   anomaly_flags_stream_arn    = module.dynamodb.anomaly_flags_stream_arn
   inventory_alerts_stream_arn = module.dynamodb.inventory_alerts_stream_arn
 }
+
+module "sqs" {
+  source              = "./modules/sqs"
+  project_name        = var.project_name
+  environment         = var.environment
+  aws_account_id      = var.aws_account_id
+  sns_ecommerce_arn   = module.sns.anomaly_topic_arns["ecommerce"]
+  sns_pharmacy_arn    = module.sns.anomaly_topic_arns["pharmacy"]
+  sns_marketplace_arn = module.sns.anomaly_topic_arns["marketplace"]
+  sns_platform_arn    = module.sns.anomaly_topic_arns["platform"]
+}

@@ -33,3 +33,8 @@ output "dynamodb_stream_arns" {
     inventory_alerts = module.dynamodb.inventory_alerts_stream_arn
   }
 }
+
+output "sqs_alert_queue_url" {
+  description = "SQS alert queue URL for polling alerts"
+  value       = module.sqs.alert_queue_url
+}
