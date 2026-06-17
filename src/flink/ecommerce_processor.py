@@ -121,7 +121,6 @@ def main():
     env.set_parallelism(1)
     env.enable_checkpointing(60000)
 
-    import os
     jar_dir = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "jars"
     )
@@ -133,7 +132,11 @@ def main():
         .set_bootstrap_servers(BOOTSTRAP_SERVERS)
         .set_topics(TOPIC)
         .set_group_id("acip-ecommerce-processor")
-        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
+        .set_starting_offsets(
+            KafkaOffsetsInitializer.committed_offsets(
+                KafkaOffsetsInitializer.earliest()
+            )
+        )
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )
