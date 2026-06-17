@@ -1,0 +1,100 @@
+# ====================================================================
+# AWS Commerce Intelligence Platform - .gitignore
+# ====================================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Data files - never commit raw or processed data
+data/raw/
+data/bronze/
+data/silver/
+data/gold/
+*.csv
+*.parquet
+*.json.gz
+
+# Logs
+logs/
+*.log
+
+# Database
+*.db
+*.sqlite
+
+# Credentials - never commit
+.env
+config/credentials.json
+
+# AWS
+.aws/
+*.pem
+
+# Terraform
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+*.tfvars
+terraform/modules/*/.terraform/
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Flink
+flink/checkpoints/
+flink/savepoints/
+flink-*.log
+flink-*.out
+
+# Redpanda
+redpanda/data/
+redpanda/logs/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+dbt/.user.yml
+
+# Prefect
+.prefect/
+
+# Grafana
+grafana/data/
+grafana/logs/
+
+# Test coverage
+.coverage
+coverage.xml
+htmlcov/
+
+# Pytest
+.pytest_cache/
+
+# VS Code
+.vscode/
+*.code-workspace
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Databricks
+.databricks/
+databricks/.databricks/
+terraform/modules/lambda/placeholder/*.zip
+
+src/flink/jars/*.jar
