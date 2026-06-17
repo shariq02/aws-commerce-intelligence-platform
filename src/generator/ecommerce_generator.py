@@ -13,11 +13,12 @@ CUSTOMER_SEGMENT_LABELS = ["premium", "standard", "new"]
 
 class EcommerceGenerator(BaseGenerator):
 
-    def __init__(self, data_path, event_rate=10):
+    def __init__(self, data_path, event_rate=10, run_id=None):
         super().__init__(
             domain="ecommerce",
             source_system="ecommerce-simulator",
             event_rate=event_rate,
+            run_id=run_id,
         )
         self.data_path = data_path
         self.orders_df = None
@@ -161,13 +162,31 @@ class EcommerceGenerator(BaseGenerator):
 
     def generate(self):
         self.load_data()
+
+        start_row, completed = self.load_checkpoint()
+        if completed:
+            return
+
         logger.info(f"Starting e-commerce generator at {self.event_rate} events/sec...")
+        if start_row > 0:
+            logger.info(f"Resuming from row {start_row} of {len(self.orders_df)}")
+
         delay = 1.0 / self.event_rate
-        for _, order in self.orders_df.iterrows():
+
+        for idx, (_, order) in enumerate(self.orders_df.iterrows()):
+            if idx < start_row:
+                continue
+
             items = self._build_items(order["order_id"])
             self._publish_order_placed(order, items)
             self._publish_order_fulfilled(order)
             self._publish_order_returned(order)
             time.sleep(delay)
+
+            if (idx + 1) % self.CHECKPOINT_INTERVAL == 0:
+                self.save_checkpoint(idx + 1)
+                logger.info(f"Checkpoint saved: row {idx + 1}/{len(self.orders_df)}")
+
         self.flush()
+        self.save_checkpoint(len(self.orders_df), completed=True)
         logger.info("E-commerce generator completed.")

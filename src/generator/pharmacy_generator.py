@@ -36,11 +36,12 @@ INITIAL_STOCK = 500
 
 class PharmacyGenerator(BaseGenerator):
 
-    def __init__(self, data_path, event_rate=10):
+    def __init__(self, data_path, event_rate=10, run_id=None):
         super().__init__(
             domain="pharmacy",
             source_system="pharmacy-simulator",
             event_rate=event_rate,
+            run_id=run_id,
         )
         self.data_path = data_path
         self.sales_df = None
@@ -123,12 +124,22 @@ class PharmacyGenerator(BaseGenerator):
 
     def generate(self):
         self.load_data()
-        logger.info(
-            f"Starting pharmacy generator at {self.event_rate} events/sec..."
-        )
+
+        start_row, completed = self.load_checkpoint()
+        if completed:
+            return
+
+        logger.info(f"Starting pharmacy generator at {self.event_rate} events/sec...")
+        if start_row > 0:
+            logger.info(f"Resuming from row {start_row} of {len(self.sales_df)}")
+
         delay = 1.0 / self.event_rate
         counter = 0
+
         for idx, row in self.sales_df.iterrows():
+            if idx < start_row:
+                continue
+
             for drug_code in ATC_CATEGORIES:
                 quantity = row.get(drug_code, 0)
                 if pd.isna(quantity) or quantity <= 0:
@@ -143,5 +154,11 @@ class PharmacyGenerator(BaseGenerator):
                 if counter % self.inventory_publish_interval == 0:
                     self._publish_inventory_update(drug_code)
                 time.sleep(delay)
+
+            if (idx + 1) % self.CHECKPOINT_INTERVAL == 0:
+                self.save_checkpoint(idx + 1)
+                logger.info(f"Checkpoint saved: row {idx + 1}/{len(self.sales_df)}")
+
         self.flush()
+        self.save_checkpoint(len(self.sales_df), completed=True)
         logger.info("Pharmacy generator completed.")

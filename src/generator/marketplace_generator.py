@@ -25,11 +25,12 @@ DISPATCH_TIME_PARAMS = {
 
 class MarketplaceGenerator(BaseGenerator):
 
-    def __init__(self, data_path, event_rate=10):
+    def __init__(self, data_path, event_rate=10, run_id=None):
         super().__init__(
             domain="marketplace",
             source_system="marketplace-simulator",
             event_rate=event_rate,
+            run_id=run_id,
         )
         self.data_path = data_path
         self.sellers_df = None
@@ -158,16 +159,32 @@ class MarketplaceGenerator(BaseGenerator):
 
     def generate(self):
         self.load_data()
-        logger.info(
-            f"Starting marketplace generator at {self.event_rate} events/sec..."
-        )
+
+        start_row, completed = self.load_checkpoint()
+        if completed:
+            return
+
+        logger.info(f"Starting marketplace generator at {self.event_rate} events/sec...")
+        if start_row > 0:
+            logger.info(f"Resuming from row {start_row} of {len(self.items_df)}")
+
         delay = 1.0 / self.event_rate
-        for _, item in self.items_df.iterrows():
+
+        for idx, (_, item) in enumerate(self.items_df.iterrows()):
+            if idx < start_row:
+                continue
+
             seller_id = item["seller_id"]
             tier = self.seller_tiers.get(seller_id, "new")
             self._publish_listing_created(seller_id, item, tier)
             self._publish_order_dispatched(seller_id, item, tier)
             self._publish_price_updated(seller_id, item, tier)
             time.sleep(delay)
+
+            if (idx + 1) % self.CHECKPOINT_INTERVAL == 0:
+                self.save_checkpoint(idx + 1)
+                logger.info(f"Checkpoint saved: row {idx + 1}/{len(self.items_df)}")
+
         self.flush()
+        self.save_checkpoint(len(self.items_df), completed=True)
         logger.info("Marketplace generator completed.")
