@@ -1,12 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## SILVER - PHARMACY TRANSFORMATION
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Transform Bronze pharmacy tables to universal silver.events schema
-# MAGIC **Input:** acip.bronze.pharma_sales_hourly
-# MAGIC **Output:** acip.silver.events (mode=APPEND - adds pharmacy rows)
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Transform Bronze pharmacy tables to universal silver.events schema  
+# MAGIC **Input:** acip.bronze.pharma_sales_hourly  
+# MAGIC **Output:** acip.silver.events (mode=APPEND - adds pharmacy rows)  
 # MAGIC **Rollback:** If this fails, rerun notebook 04 first (overwrite), then rerun this
 
 # COMMAND ----------
@@ -15,7 +15,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType
-import uuid
 
 # COMMAND ----------
 
@@ -25,7 +24,7 @@ spark = SparkSession.builder.getOrCreate()
 CATALOG = "acip"
 SOURCE = "bronze"
 TARGET_TABLE = f"{CATALOG}.silver.events"
-RUN_ID = spark.conf.get("acip.run_id", "manual")
+RUN_ID = "manual"
 
 print("PHARMACY SILVER TRANSFORMATION")
 print("=" * 70)
@@ -129,7 +128,7 @@ for col_name in DRUG_COLS:
 print("STEP 5: UNPIVOT DRUGS AND BUILD EVENT ENVELOPE")
 print("=" * 70)
 
-uuid_udf = F.udf(lambda: str(uuid.uuid4()), StringType())
+uuid_udf = F.expr("uuid()")
 
 all_drug_events = None
 
@@ -140,7 +139,7 @@ for drug_col in DRUG_COLS:
         F.col(drug_col).cast("double").isNotNull() &
         (F.col(drug_col).cast("double") > 0)
     ).select(
-        uuid_udf().alias("event_id"),
+        uuid_udf.alias("event_id"),
         F.lit("prescription.filled").alias("event_type"),
         F.lit("1.0").alias("event_version"),
         F.lit("pharmacy").alias("domain"),

@@ -16,7 +16,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType
-import uuid
 
 # COMMAND ----------
 
@@ -26,7 +25,7 @@ spark = SparkSession.builder.getOrCreate()
 CATALOG = "acip"
 SOURCE = "bronze"
 TARGET_TABLE = f"{CATALOG}.silver.events"
-RUN_ID = spark.conf.get("acip.run_id", "manual")
+RUN_ID = "manual"
 
 print("ECOMMERCE SILVER TRANSFORMATION")
 print("=" * 70)
@@ -226,7 +225,8 @@ print("=" * 70)
 reviews_clean = reviews \
     .filter(F.col("order_id").isNotNull() & (F.trim(F.col("order_id")) != "")) \
     .filter(F.col("review_score").isNotNull()) \
-    .withColumn("review_score", F.col("review_score").cast("int")) \
+    .withColumn("review_score", F.expr("try_cast(review_score as int)")) \
+    .filter(F.col("review_score").isNotNull()) \
     .filter(F.col("review_score").between(1, 5)) \
     .withColumn("review_sentiment",
         F.when(F.col("review_score") >= 4, "positive")
@@ -347,10 +347,10 @@ for row in segment_dist:
 print("STEP 9: BUILD EVENT ENVELOPE - order.placed")
 print("=" * 70)
 
-uuid_udf = F.udf(lambda: str(uuid.uuid4()), StringType())
+uuid_udf = F.expr("uuid()")
 
 placed_events = orders_enriched.select(
-    uuid_udf().alias("event_id"),
+    uuid_udf.alias("event_id"),
     F.lit("order.placed").alias("event_type"),
     F.lit("1.0").alias("event_version"),
     F.lit("ecommerce").alias("domain"),
@@ -401,7 +401,7 @@ print("=" * 70)
 fulfilled_events = orders_enriched.filter(
     F.col("order_delivered_customer_ts").isNotNull()
 ).select(
-    uuid_udf().alias("event_id"),
+    uuid_udf.alias("event_id"),
     F.lit("order.fulfilled").alias("event_type"),
     F.lit("1.0").alias("event_version"),
     F.lit("ecommerce").alias("domain"),
@@ -460,7 +460,7 @@ print("=" * 70)
 returned_events = orders_enriched.filter(
     F.col("has_negative_review") == True
 ).select(
-    uuid_udf().alias("event_id"),
+    uuid_udf.alias("event_id"),
     F.lit("order.returned").alias("event_type"),
     F.lit("1.0").alias("event_version"),
     F.lit("ecommerce").alias("domain"),

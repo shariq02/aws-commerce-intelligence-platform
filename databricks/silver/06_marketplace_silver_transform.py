@@ -1,13 +1,13 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## SILVER - MARKETPLACE TRANSFORMATION
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Transform Bronze marketplace tables to universal silver.events schema
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Transform Bronze marketplace tables to universal silver.events schema  
 # MAGIC **Input:** acip.bronze.marketplace_sellers, marketplace_order_items,
-# MAGIC            marketplace_products, marketplace_orders, category_translations
-# MAGIC **Output:** acip.silver.events (mode=APPEND - adds marketplace rows)
+# MAGIC            marketplace_products, marketplace_orders, category_translations  
+# MAGIC **Output:** acip.silver.events (mode=APPEND - adds marketplace rows)  
 # MAGIC **Rollback:** If this fails, rerun notebook 04 first (overwrite), then rerun 05 and this
 
 # COMMAND ----------
@@ -16,7 +16,6 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StringType
-import uuid
 
 # COMMAND ----------
 
@@ -26,7 +25,7 @@ spark = SparkSession.builder.getOrCreate()
 CATALOG = "acip"
 SOURCE = "bronze"
 TARGET_TABLE = f"{CATALOG}.silver.events"
-RUN_ID = spark.conf.get("acip.run_id", "manual")
+RUN_ID = "manual"
 
 print("MARKETPLACE SILVER TRANSFORMATION")
 print("=" * 70)
@@ -236,10 +235,10 @@ print(f"Items enriched: {items_enriched.count():,}")
 print("STEP 6: BUILD EVENT ENVELOPE - listing.created")
 print("=" * 70)
 
-uuid_udf = F.udf(lambda: str(uuid.uuid4()), StringType())
+uuid_udf = F.expr("uuid()")
 
 listing_events = sellers_enriched.select(
-    uuid_udf().alias("event_id"),
+    uuid_udf.alias("event_id"),
     F.lit("listing.created").alias("event_type"),
     F.lit("1.0").alias("event_version"),
     F.lit("marketplace").alias("domain"),
@@ -283,7 +282,7 @@ print("=" * 70)
 dispatch_events = items_enriched.filter(
     F.col("order_delivered_customer_ts").isNotNull()
 ).select(
-    uuid_udf().alias("event_id"),
+    uuid_udf.alias("event_id"),
     F.lit("seller.order.dispatched").alias("event_type"),
     F.lit("1.0").alias("event_version"),
     F.lit("marketplace").alias("domain"),
@@ -339,7 +338,7 @@ price_events = items_enriched.filter(
     "change_pct",
     F.round((F.col("price") - F.col("old_price")) / F.col("old_price") * 100, 2)
 ).filter(F.abs(F.col("change_pct")) >= 2.0).select(
-    uuid_udf().alias("event_id"),
+    uuid_udf.alias("event_id"),
     F.lit("price.updated").alias("event_type"),
     F.lit("1.0").alias("event_version"),
     F.lit("marketplace").alias("domain"),

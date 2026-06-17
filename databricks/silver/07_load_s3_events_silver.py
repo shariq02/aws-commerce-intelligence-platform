@@ -1,12 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## SILVER - LOAD S3 BRONZE EVENTS
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Load Flink S3 Bronze JSON events into universal silver.events schema
-# MAGIC **Input:** /Volumes/acip/bronze/raw_files/s3_events/ (JSON files from Flink)
-# MAGIC **Output:** acip.silver.events (mode=APPEND - adds streaming events)
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Load Flink S3 Bronze JSON events into universal silver.events schema  
+# MAGIC **Input:** /Volumes/acip/bronze/raw_files/s3_events/ (JSON files from Flink)  
+# MAGIC **Output:** acip.silver.events (mode=APPEND - adds streaming events)  
 # MAGIC **Rollback:** If this fails, simply rerun - APPEND is safe to retry
 
 # COMMAND ----------
@@ -26,7 +26,7 @@ spark = SparkSession.builder.getOrCreate()
 CATALOG = "acip"
 TARGET_TABLE = f"{CATALOG}.silver.events"
 S3_EVENTS_VOLUME = f"/Volumes/{CATALOG}/bronze/raw_files/s3_events/"
-RUN_ID = spark.conf.get("acip.run_id", "manual")
+RUN_ID = "manual"
 
 print("S3 BRONZE EVENTS SILVER LOAD")
 print("=" * 70)

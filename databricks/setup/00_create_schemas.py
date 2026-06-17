@@ -3,9 +3,9 @@
 # MAGIC ## CREATE ACIP SCHEMAS AND VOLUMES
 # MAGIC ### Setup all required Unity Catalog structure
 # MAGIC
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
 # MAGIC
 # MAGIC **Purpose:** Create catalog schemas, volumes, and quality tables for ACIP project
 
