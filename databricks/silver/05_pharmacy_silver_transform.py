@@ -1,62 +1,50 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## SILVER - PHARMACY TRANSFORMATION
-# MAGIC ### Bronze to Silver with Full Feature Extraction
-# MAGIC
 # MAGIC **AWS Commerce Intelligence Platform**
 # MAGIC **Author:** Sharique Mohammad
 # MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Transform raw Pharma Sales Bronze tables into enriched Silver event layer
-# MAGIC
-# MAGIC **Input Tables:**
-# MAGIC - acip.bronze.pharma_sales_hourly
-# MAGIC - acip.bronze.pharma_sales_daily
-# MAGIC
-# MAGIC **Output Table:** acip.silver.pharmacy_events
-# MAGIC
-# MAGIC **Run Order:**
-# MAGIC ```
-# MAGIC 1. databricks/bronze/02_load_pharmacy_bronze.py
-# MAGIC 2. databricks/silver/05_pharmacy_silver_transform.py  (THIS SCRIPT)
-# MAGIC ```
+# MAGIC **Purpose:** Transform Bronze pharmacy tables to universal silver.events schema
+# MAGIC **Input:** acip.bronze.pharma_sales_hourly
+# MAGIC **Output:** acip.silver.events (mode=APPEND - adds pharmacy rows)
+# MAGIC **Rollback:** If this fails, rerun notebook 04 first (overwrite), then rerun this
 
 # COMMAND ----------
 
 # DBTITLE 1,Import Libraries
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from pyspark.sql import Window
-from pyspark.sql.types import StringType, DoubleType, IntegerType, BooleanType
+from pyspark.sql.types import StringType
 import uuid
 
 # COMMAND ----------
 
-# DBTITLE 1,Initialize
+# DBTITLE 1,Configuration
 spark = SparkSession.builder.getOrCreate()
 
 CATALOG = "acip"
 SOURCE = "bronze"
-TARGET = "silver"
-TARGET_TABLE = f"{CATALOG}.{TARGET}.pharmacy_events"
+TARGET_TABLE = f"{CATALOG}.silver.events"
+RUN_ID = spark.conf.get("acip.run_id", "manual")
 
 print("PHARMACY SILVER TRANSFORMATION")
 print("=" * 70)
-print(f"Source: {CATALOG}.{SOURCE}")
+print(f"Source: {CATALOG}.{SOURCE}.pharma_sales_hourly")
 print(f"Target: {TARGET_TABLE}")
+print(f"Mode: APPEND - adds pharmacy rows to existing silver.events")
+print(f"Run ID: {RUN_ID}")
 print(f"Spark version: {spark.version}")
 
 # COMMAND ----------
 
-# DBTITLE 1,STEP 1: Load Bronze Tables
-print("STEP 1: LOADING BRONZE TABLES")
+# DBTITLE 1,STEP 1: Load Bronze Table
+print("STEP 1: LOADING BRONZE TABLE")
 print("=" * 70)
 
 hourly = spark.table(f"{CATALOG}.{SOURCE}.pharma_sales_hourly")
-daily = spark.table(f"{CATALOG}.{SOURCE}.pharma_sales_daily")
 
 print(f"pharma_sales_hourly: {hourly.count():,} rows")
-print(f"pharma_sales_daily:  {daily.count():,} rows")
-print(f"\nHourly columns: {hourly.columns}")
+print(f"Columns: {hourly.columns}")
 
 display(hourly.limit(3))
 
@@ -69,90 +57,25 @@ print("=" * 70)
 DRUG_COLS = ["M01AB", "M01AE", "N02BA", "N02BE", "N05B", "N05C", "R03", "R06"]
 
 DRUG_MAP = {
-    "M01AB": {
-        "category": "anti_inflammatory_acetic_acid",
-        "category_group": "anti_inflammatory",
-        "is_prescription": True,
-        "atc_code": "M01AB",
-        "drug_class": "NSAID"
-    },
-    "M01AE": {
-        "category": "anti_inflammatory_propionic_acid",
-        "category_group": "anti_inflammatory",
-        "is_prescription": False,
-        "atc_code": "M01AE",
-        "drug_class": "NSAID"
-    },
-    "N02BA": {
-        "category": "analgesic_salicylic_acid",
-        "category_group": "analgesic",
-        "is_prescription": False,
-        "atc_code": "N02BA",
-        "drug_class": "salicylate"
-    },
-    "N02BE": {
-        "category": "analgesic_anilide",
-        "category_group": "analgesic",
-        "is_prescription": False,
-        "atc_code": "N02BE",
-        "drug_class": "anilide"
-    },
-    "N05B": {
-        "category": "anxiolytic",
-        "category_group": "psychoactive",
-        "is_prescription": True,
-        "atc_code": "N05B",
-        "drug_class": "benzodiazepine"
-    },
-    "N05C": {
-        "category": "hypnotic_sedative",
-        "category_group": "psychoactive",
-        "is_prescription": True,
-        "atc_code": "N05C",
-        "drug_class": "sedative"
-    },
-    "R03": {
-        "category": "respiratory_obstructive",
-        "category_group": "respiratory",
-        "is_prescription": True,
-        "atc_code": "R03",
-        "drug_class": "bronchodilator"
-    },
-    "R06": {
-        "category": "antihistamine",
-        "category_group": "respiratory",
-        "is_prescription": False,
-        "atc_code": "R06",
-        "drug_class": "antihistamine"
-    }
+    "M01AB": {"category": "anti_inflammatory_acetic_acid",  "category_group": "anti_inflammatory", "is_prescription": True,  "atc_code": "M01AB", "drug_class": "NSAID"},
+    "M01AE": {"category": "anti_inflammatory_propionic_acid","category_group": "anti_inflammatory", "is_prescription": False, "atc_code": "M01AE", "drug_class": "NSAID"},
+    "N02BA": {"category": "analgesic_salicylic_acid",        "category_group": "analgesic",         "is_prescription": False, "atc_code": "N02BA", "drug_class": "salicylate"},
+    "N02BE": {"category": "analgesic_anilide",               "category_group": "analgesic",         "is_prescription": False, "atc_code": "N02BE", "drug_class": "anilide"},
+    "N05B":  {"category": "anxiolytic",                      "category_group": "psychoactive",      "is_prescription": True,  "atc_code": "N05B",  "drug_class": "benzodiazepine"},
+    "N05C":  {"category": "hypnotic_sedative",               "category_group": "psychoactive",      "is_prescription": True,  "atc_code": "N05C",  "drug_class": "sedative"},
+    "R03":   {"category": "respiratory_obstructive",         "category_group": "respiratory",       "is_prescription": True,  "atc_code": "R03",   "drug_class": "bronchodilator"},
+    "R06":   {"category": "antihistamine",                   "category_group": "respiratory",       "is_prescription": False, "atc_code": "R06",   "drug_class": "antihistamine"},
 }
 
 print("Drug ATC code mapping:")
 for code, info in DRUG_MAP.items():
     rx = "Rx" if info["is_prescription"] else "OTC"
-    print(f"  {code}: {info['category']} [{rx}] -> {info['category_group']}")
+    print(f"  {code}: {info['category']} [{rx}]")
 
 # COMMAND ----------
 
-# DBTITLE 1,STEP 3: Inspect Drug Column Statistics
-print("STEP 3: INSPECT DRUG COLUMN STATISTICS")
-print("=" * 70)
-
-print("\nSales volume statistics per drug:")
-for col_name in DRUG_COLS:
-    stats = hourly.select(
-        F.count(F.when(F.col(col_name).cast("double") > 0, True)).alias("non_zero"),
-        F.avg(F.col(col_name).cast("double")).alias("avg"),
-        F.max(F.col(col_name).cast("double")).alias("max"),
-        F.sum(F.col(col_name).cast("double")).alias("total")
-    ).collect()[0]
-    pct = stats["non_zero"] / hourly.count() * 100
-    print(f"  {col_name}: non_zero={stats['non_zero']:,} ({pct:.1f}%) | avg={stats['avg']:.2f} | max={stats['max']:.2f} | total={stats['total']:.0f}")
-
-# COMMAND ----------
-
-# DBTITLE 1,STEP 4: Clean Hourly Data
-print("STEP 4: CLEAN HOURLY DATA")
+# DBTITLE 1,STEP 3: Clean Hourly Data
+print("STEP 3: CLEAN HOURLY DATA")
 print("=" * 70)
 
 hourly_clean = hourly \
@@ -162,9 +85,7 @@ hourly_clean = hourly \
     .withColumn("month", F.col("Month").cast("int")) \
     .withColumn("hour", F.col("Hour").cast("int")) \
     .withColumn("weekday", F.trim(F.col("weekday_name"))) \
-    .withColumn("is_weekend",
-        F.col("weekday").isin("Saturday", "Sunday")
-    ) \
+    .withColumn("is_weekend", F.col("weekday").isin("Saturday", "Sunday")) \
     .withColumn("time_of_day",
         F.when(F.col("hour").between(6, 11), "morning")
          .when(F.col("hour").between(12, 17), "afternoon")
@@ -173,6 +94,9 @@ hourly_clean = hourly \
     ) \
     .withColumn("is_business_hours",
         F.col("hour").between(9, 18) & ~F.col("is_weekend")
+    ) \
+    .withColumn("is_peak_hour",
+        F.col("hour").between(10, 12) | F.col("hour").between(16, 19)
     )
 
 print(f"Valid hourly records: {hourly_clean.count():,}")
@@ -183,15 +107,26 @@ for row in time_dist:
     pct = row["count"] / hourly_clean.count() * 100
     print(f"  {row['time_of_day']}: {row['count']:,} ({pct:.1f}%)")
 
-display(hourly_clean.select(
-    "datum", "year", "month", "hour", "weekday",
-    "is_weekend", "time_of_day", "is_business_hours"
-).limit(5))
+# COMMAND ----------
+
+# DBTITLE 1,STEP 4: Inspect Drug Statistics
+print("STEP 4: INSPECT DRUG STATISTICS")
+print("=" * 70)
+
+print("Sales volume statistics per drug:")
+for col_name in DRUG_COLS:
+    stats = hourly_clean.select(
+        F.count(F.when(F.col(col_name).cast("double") > 0, True)).alias("non_zero"),
+        F.avg(F.col(col_name).cast("double")).alias("avg"),
+        F.max(F.col(col_name).cast("double")).alias("max")
+    ).collect()[0]
+    pct = stats["non_zero"] / hourly_clean.count() * 100
+    print(f"  {col_name}: non_zero={stats['non_zero']:,} ({pct:.1f}%) avg={stats['avg']:.2f} max={stats['max']:.2f}")
 
 # COMMAND ----------
 
-# DBTITLE 1,STEP 5: Unpivot Drug Columns and Build Events
-print("STEP 5: UNPIVOT DRUG COLUMNS AND BUILD EVENTS")
+# DBTITLE 1,STEP 5: Unpivot Drugs and Build Universal Event Envelope
+print("STEP 5: UNPIVOT DRUGS AND BUILD EVENT ENVELOPE")
 print("=" * 70)
 
 uuid_udf = F.udf(lambda: str(uuid.uuid4()), StringType())
@@ -220,23 +155,29 @@ for drug_col in DRUG_COLS:
             F.lit(drug_col),
             F.col("hour").cast("string")
         ).alias("correlation_id"),
-        F.lit(drug_col).alias("product_id"),
-        F.lit(info["category"]).alias("category"),
-        F.lit(info["category_group"]).alias("category_group"),
-        F.lit(info["atc_code"]).alias("atc_code"),
-        F.lit(info["drug_class"]).alias("drug_class"),
-        F.col(drug_col).cast("double").alias("quantity"),
-        F.lit(info["is_prescription"]).alias("is_prescription"),
-        F.col("year"),
-        F.col("month"),
-        F.col("hour"),
-        F.col("weekday"),
-        F.col("is_weekend"),
-        F.col("time_of_day"),
-        F.col("is_business_hours"),
-        F.round(F.rand() * 500 + 50, 0).cast("int").alias("stock_level"),
-        F.lit(50).alias("reorder_threshold"),
-        F.round(F.rand() * 30 + 5, 0).cast("int").alias("fill_time_mins")
+        F.to_json(F.struct(
+            F.lit(drug_col).alias("product_id"),
+            F.lit(info["category"]).alias("category"),
+            F.lit(info["category_group"]).alias("category_group"),
+            F.lit(info["atc_code"]).alias("atc_code"),
+            F.lit(info["drug_class"]).alias("drug_class"),
+            F.col(drug_col).cast("double").alias("quantity"),
+            F.lit(info["is_prescription"]).alias("is_prescription"),
+            F.col("year"),
+            F.col("month"),
+            F.col("hour"),
+            F.col("weekday"),
+            F.col("is_weekend"),
+            F.col("time_of_day"),
+            F.col("is_business_hours"),
+            F.col("is_peak_hour"),
+            F.round(F.rand() * 500 + 50, 0).cast("int").alias("stock_level"),
+            F.lit(50).alias("reorder_threshold"),
+            F.round(F.rand() * 30 + 5, 0).cast("int").alias("fill_time_mins")
+        )).alias("payload")
+    ).filter(
+        F.col("correlation_id").isNotNull() &
+        F.col("occurred_at").isNotNull()
     )
 
     if all_drug_events is None:
@@ -247,47 +188,10 @@ for drug_col in DRUG_COLS:
     count = drug_events.count()
     print(f"  {drug_col} ({info['category']}): {count:,} events")
 
-total_before_dedup = all_drug_events.count()
-print(f"\nTotal events before deduplication: {total_before_dedup:,}")
-
 # COMMAND ----------
 
-# DBTITLE 1,STEP 6: Add Derived Columns
-print("STEP 6: ADD DERIVED COLUMNS")
-print("=" * 70)
-
-all_drug_events = all_drug_events \
-    .withColumn("days_of_supply",
-        F.when(F.col("quantity") > 0,
-            F.round(F.col("stock_level") / F.col("quantity"), 1)
-        ).otherwise(F.lit(None))
-    ) \
-    .withColumn("stock_alert_level",
-        F.when(F.col("stock_level") <= F.col("reorder_threshold") * 0.5, "critical")
-         .when(F.col("stock_level") <= F.col("reorder_threshold"), "high")
-         .when(F.col("stock_level") <= F.col("reorder_threshold") * 2, "medium")
-         .otherwise("normal")
-    ) \
-    .withColumn("is_high_demand",
-        F.col("quantity") > 2.0
-    ) \
-    .withColumn("is_peak_hour",
-        F.col("hour").between(10, 12) | F.col("hour").between(16, 19)
-    )
-
-print("Derived columns added:")
-print("  days_of_supply, stock_alert_level, is_high_demand, is_peak_hour")
-
-alert_dist = all_drug_events.groupBy("stock_alert_level").count().collect()
-print("\nStock alert level distribution:")
-for row in alert_dist:
-    pct = row["count"] / all_drug_events.count() * 100
-    print(f"  {row['stock_alert_level']}: {row['count']:,} ({pct:.1f}%)")
-
-# COMMAND ----------
-
-# DBTITLE 1,STEP 7: Deduplicate
-print("STEP 7: DEDUPLICATE")
+# DBTITLE 1,STEP 6: Deduplicate
+print("STEP 6: DEDUPLICATE")
 print("=" * 70)
 
 before_dedup = all_drug_events.count()
@@ -298,63 +202,71 @@ print(f"Before deduplication: {before_dedup:,}")
 print(f"After deduplication:  {after_dedup:,}")
 print(f"Duplicates removed:   {before_dedup - after_dedup:,}")
 
-category_group_dist = all_drug_events.groupBy("category_group").count().collect()
-print("\nCategory group distribution:")
-for row in category_group_dist:
-    pct = row["count"] / after_dedup * 100
-    print(f"  {row['category_group']}: {row['count']:,} ({pct:.1f}%)")
-
 # COMMAND ----------
 
-# DBTITLE 1,STEP 8: Write Silver Delta Table
-print("STEP 8: WRITE SILVER DELTA TABLE")
+# DBTITLE 1,STEP 7: Append to silver.events
+print("STEP 7: APPEND TO silver.events")
 print("=" * 70)
+print("NOTE: Mode=APPEND adds pharmacy rows.")
+print("If this fails, rerun notebook 04 first, then rerun this.")
 
 all_drug_events.write \
     .format("delta") \
-    .mode("overwrite") \
-    .option("overwriteSchema", "true") \
+    .mode("append") \
     .saveAsTable(TARGET_TABLE)
 
-written = spark.table(TARGET_TABLE).count()
-print(f"PASS: {TARGET_TABLE} written - {written:,} rows")
+total = spark.table(TARGET_TABLE).count()
+print(f"\nPASS: {TARGET_TABLE} total rows after append - {total:,}")
 
 # COMMAND ----------
 
-# DBTITLE 1,STEP 9: Data Quality Validation
-print("STEP 9: DATA QUALITY VALIDATION")
+# DBTITLE 1,STEP 8: Write Watermark
+print("STEP 8: WRITE WATERMARK")
 print("=" * 70)
 
-df = spark.table(TARGET_TABLE)
+spark.sql(f"""
+    INSERT INTO {CATALOG}.quality.pipeline_watermarks VALUES (
+        '{RUN_ID}',
+        'pharmacy',
+        'processing',
+        '05_pharmacy_silver_transform',
+        current_timestamp(),
+        null,
+        {after_dedup},
+        'COMPLETE',
+        current_timestamp(),
+        current_timestamp()
+    )
+""")
+
+print(f"PASS: Watermark written for run_id={RUN_ID} domain=pharmacy")
+
+# COMMAND ----------
+
+# DBTITLE 1,STEP 9: Data Quality Checks
+print("STEP 9: DATA QUALITY CHECKS")
+print("=" * 70)
+
+df = spark.table(TARGET_TABLE).filter(F.col("domain") == "pharmacy")
 total = df.count()
 
 checks = {
     "null_event_id":       df.filter(F.col("event_id").isNull()).count(),
-    "null_event_type":     df.filter(F.col("event_type").isNull()).count(),
-    "null_domain":         df.filter(F.col("domain").isNull()).count(),
     "null_occurred_at":    df.filter(F.col("occurred_at").isNull()).count(),
     "null_correlation_id": df.filter(F.col("correlation_id").isNull()).count(),
-    "null_product_id":     df.filter(F.col("product_id").isNull()).count(),
-    "null_quantity":       df.filter(F.col("quantity").isNull()).count(),
-    "zero_quantity":       df.filter(F.col("quantity") == 0).count(),
-    "null_category":       df.filter(F.col("category").isNull()).count(),
+    "null_payload":        df.filter(F.col("payload").isNull()).count(),
 }
 
-print(f"\nTotal rows: {total:,}")
-print(f"Columns:    {len(df.columns)}")
-print("\nNull checks:")
+print(f"Pharmacy rows in silver.events: {total:,}")
+print("\nNull checks (pharmacy rows only):")
 all_passed = True
 for check, count in checks.items():
-    pct = count / total * 100
-    status = "PASS" if count == 0 else "WARN"
+    pct = count / total * 100 if total > 0 else 0
+    status = "PASS" if count == 0 else "FAIL"
     if count > 0:
         all_passed = False
     print(f"  {status} {check}: {count:,} ({pct:.2f}%)")
 
-print(f"\nOverall quality: {'PASS' if all_passed else 'WARN - review above'}")
+print(f"\nOverall: {'PASS' if all_passed else 'FAIL - review above'}")
 
-display(df.select(
-    "event_id", "event_type", "product_id", "category",
-    "category_group", "quantity", "stock_level",
-    "stock_alert_level", "days_of_supply", "occurred_at"
-).limit(10))
+display(df.select("event_id", "event_type", "domain", "occurred_at", "correlation_id", "payload").limit(5))
