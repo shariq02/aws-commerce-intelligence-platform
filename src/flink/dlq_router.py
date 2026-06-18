@@ -136,11 +136,7 @@ def main():
             .set_bootstrap_servers(BOOTSTRAP_SERVERS)
             .set_topics(topic)
             .set_group_id(f"acip-dlq-router-{topic}")
-            .set_starting_offsets(
-                KafkaOffsetsInitializer.committed_offsets(
-                    KafkaOffsetsInitializer.earliest()
-                )
-            )
+            .set_starting_offsets(KafkaOffsetsInitializer.earliest())
             .set_value_only_deserializer(SimpleStringSchema())
             .build()
         )

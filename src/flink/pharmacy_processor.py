@@ -169,11 +169,7 @@ def main():
         .set_bootstrap_servers(BOOTSTRAP_SERVERS)
         .set_topics(TOPIC)
         .set_group_id("acip-pharmacy-processor")
-        .set_starting_offsets(
-            KafkaOffsetsInitializer.committed_offsets(
-                KafkaOffsetsInitializer.earliest()
-            )
-        )
+        .set_starting_offsets(KafkaOffsetsInitializer.earliest())
         .set_value_only_deserializer(SimpleStringSchema())
         .build()
     )

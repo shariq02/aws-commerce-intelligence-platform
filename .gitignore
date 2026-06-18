@@ -19,9 +19,11 @@ data/raw/
 data/bronze/
 data/silver/
 data/gold/
+data/s3_bronze
 *.csv
 *.parquet
 *.json.gz
+*.json
 
 # Logs
 logs/
