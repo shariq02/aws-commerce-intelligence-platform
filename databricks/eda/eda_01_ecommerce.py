@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## EDA-01: ECOMMERCE EXPLORATORY DATA ANALYSIS
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Statistical analysis of ecommerce domain Gold tables
-# MAGIC **Input:** acip.gold.fact_transactions, dim_customer, dim_geography, agg_customer_segments
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Statistical analysis of ecommerce domain Gold tables  
+# MAGIC **Input:** acip.gold.fact_transactions, dim_customer, dim_geography, agg_customer_segments  
 # MAGIC **Output:** acip.eda.ecommerce_summary
 
 # COMMAND ----------
@@ -99,7 +99,7 @@ plt.show()
 print("STEP 3: ORDER STATUS AND FULFILMENT BUCKET DISTRIBUTION")
 print("=" * 70)
 
-status_dist = placed.groupBy("order_status").count().orderBy(F.col("count").desc()).toPandas()
+status_dist = placed.filter(F.col("order_status").isNotNull()).groupBy("order_status").count().orderBy(F.col("count").desc()).toPandas()
 print("Order status distribution:")
 for _, row in status_dist.iterrows():
     pct = row["count"] / placed.count() * 100
@@ -220,7 +220,7 @@ placed_with_geo = placed.join(
     on="geo_key", how="left"
 )
 
-state_region_df = placed_with_geo.groupBy("state_region").agg(
+state_region_df = placed_with_geo.filter(F.col("state_region").isNotNull()).groupBy("state_region").agg(
     F.count("transaction_key").alias("order_count"),
     F.sum("total_amount").alias("total_revenue")
 ).orderBy(F.col("order_count").desc()).toPandas()
@@ -230,7 +230,7 @@ for _, row in state_region_df.iterrows():
     pct = row["order_count"] / placed.count() * 100
     print(f"  {row['state_region']}: {row['order_count']:,} orders ({pct:.1f}%) | BRL {row['total_revenue']:,.0f}")
 
-top_states = placed_with_geo.groupBy("state").agg(
+top_states = placed_with_geo.filter(F.col("state").isNotNull()).groupBy("state").agg(
     F.count("transaction_key").alias("order_count")
 ).orderBy(F.col("order_count").desc()).limit(10).toPandas()
 

@@ -24,7 +24,7 @@ CATALOG = "acip"
 print("AWS COMMERCE INTELLIGENCE PLATFORM")
 print("=" * 60)
 print(f"Catalog: {CATALOG}")
-print("Creating schemas: bronze, silver, gold, quality")
+print("Creating schemas: bronze, silver, gold, quality, eda")
 
 # COMMAND ----------
 
@@ -53,6 +53,13 @@ print("PASS: gold schema created")
 print("Creating quality schema...")
 spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.quality")
 print("PASS: quality schema created")
+
+# COMMAND ----------
+
+# DBTITLE 1,Create EDA Schema
+print("Creating eda schema...")
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.eda")
+print("PASS: eda schema created")
 
 # COMMAND ----------
 

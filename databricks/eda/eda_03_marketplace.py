@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## EDA-03: MARKETPLACE EXPLORATORY DATA ANALYSIS
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Statistical analysis of marketplace domain Gold tables
-# MAGIC **Input:** acip.gold.fact_seller_performance, dim_seller
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Statistical analysis of marketplace domain Gold tables  
+# MAGIC **Input:** acip.gold.fact_seller_performance, dim_seller  
 # MAGIC **Output:** acip.eda.marketplace_summary
 
 # COMMAND ----------
@@ -56,7 +56,7 @@ print(f"dim_seller (current):       {dim_seller.count():,}")
 print("STEP 2: SLA BREACH RATE BY SELLER TIER")
 print("=" * 70)
 
-sla_by_tier = dispatch.groupBy("seller_tier").agg(
+sla_by_tier = dispatch.filter(F.col("seller_tier").isNotNull()).groupBy("seller_tier").agg(
     F.count("performance_key").alias("total_dispatches"),
     F.sum(F.col("is_sla_breached").cast("int")).alias("breached_count"),
     F.avg(F.col("is_sla_breached").cast("int")).alias("breach_rate"),
@@ -193,7 +193,9 @@ top_sellers_revenue = seller_revenue.limit(top_10pct).agg(F.sum("total_revenue")
 print(f"Total sellers: {total_sellers:,}")
 print(f"Top 10% sellers ({top_10pct:,}): {top_sellers_revenue/total_revenue_all*100:.1f}% of revenue")
 
-tier_revenue = dispatch.groupBy("seller_tier").agg(
+tier_revenue = dispatch.filter(
+    F.col("seller_tier").isNotNull() & F.col("price").isNotNull()
+).groupBy("seller_tier").agg(
     F.sum("price").alias("total_revenue"),
     F.countDistinct("seller_key").alias("seller_count")
 ).toPandas()

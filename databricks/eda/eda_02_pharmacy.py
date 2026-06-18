@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## EDA-02: PHARMACY EXPLORATORY DATA ANALYSIS
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Statistical analysis of pharmacy domain Gold tables
-# MAGIC **Input:** acip.gold.fact_inventory_snapshots, dim_product
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Statistical analysis of pharmacy domain Gold tables  
+# MAGIC **Input:** acip.gold.fact_inventory_snapshots, dim_product  
 # MAGIC **Output:** acip.eda.pharmacy_summary
 
 # COMMAND ----------
@@ -52,11 +52,12 @@ print("STEP 2: DRUG CATEGORY DEMAND ANALYSIS")
 print("=" * 70)
 
 fact_with_product = fact.join(
-    dim_product.select("product_key", "product_id", "category", "atc_code", "drug_class", "is_prescription"),
+    dim_product.select("product_key", "product_id", "category", "atc_code", "drug_class",
+                       F.col("is_prescription").alias("product_is_prescription")),
     on="product_key", how="left"
 )
 
-category_df = fact_with_product.groupBy("category", "is_prescription").agg(
+category_df = fact_with_product.groupBy("category", "product_is_prescription").agg(
     F.sum("quantity").alias("total_quantity"),
     F.avg("quantity").alias("avg_quantity"),
     F.count("snapshot_key").alias("transaction_count"),
@@ -65,18 +66,18 @@ category_df = fact_with_product.groupBy("category", "is_prescription").agg(
 
 print("Drug category demand:")
 for _, row in category_df.iterrows():
-    rx = "Rx" if row["is_prescription"] else "OTC"
+    rx = "Rx" if row["product_is_prescription"] else "OTC"
     print(f"  [{rx}] {row['category']}: {row['total_quantity']:,.0f} units | avg {row['avg_quantity']:.2f}/record | fill {row['avg_fill_time']:.0f} mins")
 
 fig, axes = plt.subplots(1, 2, figsize=(16, 6))
 
-colors = ["#C44E52" if rx else "#4C72B0" for rx in category_df["is_prescription"]]
+colors = ["#C44E52" if rx else "#4C72B0" for rx in category_df["product_is_prescription"]]
 axes[0].barh(category_df["category"][::-1], category_df["total_quantity"][::-1], color=colors[::-1])
 axes[0].set_title("Total Sales Quantity by Drug Category\n(Red=Prescription, Blue=OTC)")
 axes[0].set_xlabel("Total Quantity")
 
 axes[1].bar(category_df["category"], category_df["avg_fill_time"],
-            color=["#C44E52" if rx else "#4C72B0" for rx in category_df["is_prescription"]])
+            color=["#C44E52" if rx else "#4C72B0" for rx in category_df["product_is_prescription"]])
 axes[1].set_title("Average Fill Time by Drug Category (mins)")
 axes[1].set_ylabel("Fill Time (mins)")
 axes[1].tick_params(axis="x", rotation=45)
@@ -91,7 +92,7 @@ plt.show()
 print("STEP 3: PRESCRIPTION VS OTC COMPARISON")
 print("=" * 70)
 
-rx_otc = fact_with_product.groupBy("is_prescription").agg(
+rx_otc = fact_with_product.filter(F.col("product_is_prescription").isNotNull()).groupBy("product_is_prescription").agg(
     F.sum("quantity").alias("total_quantity"),
     F.count("snapshot_key").alias("transaction_count"),
     F.avg("fill_time_mins").alias("avg_fill_time"),
@@ -100,7 +101,7 @@ rx_otc = fact_with_product.groupBy("is_prescription").agg(
 ).toPandas()
 
 for _, row in rx_otc.iterrows():
-    label = "PRESCRIPTION (Rx)" if row["is_prescription"] else "OTC"
+    label = "PRESCRIPTION (Rx)" if row["product_is_prescription"] else "OTC"
     print(f"\n{label}:")
     print(f"  Total quantity sold:  {row['total_quantity']:,.0f}")
     print(f"  Transaction count:    {row['transaction_count']:,.0f}")
@@ -111,7 +112,7 @@ for _, row in rx_otc.iterrows():
 fig, axes = plt.subplots(1, 3, figsize=(16, 5))
 
 labels = ["OTC", "Prescription"]
-rx_otc_sorted = rx_otc.sort_values("is_prescription")
+rx_otc_sorted = rx_otc.sort_values("product_is_prescription")
 
 axes[0].pie(rx_otc_sorted["total_quantity"], labels=labels,
             autopct="%1.1f%%", colors=["#4C72B0", "#C44E52"])
@@ -256,8 +257,8 @@ print("STEP 8: KEY INSIGHTS")
 print("=" * 70)
 
 top_category = category_df.iloc[0]
-rx_total = rx_otc_sorted[rx_otc_sorted["is_prescription"] == True]["total_quantity"].values[0]
-otc_total = rx_otc_sorted[rx_otc_sorted["is_prescription"] == False]["total_quantity"].values[0]
+rx_total = rx_otc_sorted[rx_otc_sorted["product_is_prescription"] == True]["total_quantity"].values[0]
+otc_total = rx_otc_sorted[rx_otc_sorted["product_is_prescription"] == False]["total_quantity"].values[0]
 total_quantity = rx_total + otc_total
 
 print("PHARMACY EDA KEY FINDINGS")
@@ -267,4 +268,4 @@ print(f"2. Top selling category: {top_category['category']} ({top_category['tota
 print(f"3. Prescription drugs: {rx_total/total_quantity*100:.1f}% of total volume")
 print(f"4. OTC drugs: {otc_total/total_quantity*100:.1f}% of total volume")
 print(f"5. Critical stock situations: {critical:,} records ({critical/len(dos_df)*100:.1f}%)")
-print(f"6. Avg prescription fill time: {rx_otc_sorted[rx_otc_sorted['is_prescription']==True]['avg_fill_time'].values[0]:.0f} mins vs OTC {rx_otc_sorted[rx_otc_sorted['is_prescription']==False]['avg_fill_time'].values[0]:.0f} mins")
+print(f"6. Avg prescription fill time: {rx_otc_sorted[rx_otc_sorted['product_is_prescription']==True]['avg_fill_time'].values[0]:.0f} mins vs OTC {rx_otc_sorted[rx_otc_sorted['product_is_prescription']==False]['avg_fill_time'].values[0]:.0f} mins")

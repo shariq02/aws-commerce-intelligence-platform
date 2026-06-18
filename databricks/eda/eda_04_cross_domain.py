@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## EDA-04: CROSS-DOMAIN EXPLORATORY DATA ANALYSIS
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Cross-domain comparison and data quality analysis
-# MAGIC **Input:** acip.gold.agg_daily_domain_metrics, all fact tables, acip.silver.events
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Cross-domain comparison and data quality analysis  
+# MAGIC **Input:** acip.gold.agg_daily_domain_metrics, all fact tables, acip.silver.events  
 # MAGIC **Output:** acip.eda.cross_domain_summary
 
 # COMMAND ----------
@@ -81,39 +81,59 @@ print("Total events per domain:")
 for domain, total in domain_totals.items():
     print(f"  {domain}: {total:,}")
 
-pivot_events = daily_df.pivot(
-    index="metric_date", columns="domain", values="total_events"
-).fillna(0)
+import pandas as pd
+daily_df["metric_date"] = pd.to_datetime(daily_df["metric_date"])
 
-fig, axes = plt.subplots(2, 1, figsize=(16, 10))
+batch_df = daily_df[daily_df["metric_date"] < "2019-01-01"]
+streaming_df = daily_df[daily_df["metric_date"] >= "2019-01-01"]
 
 domain_colors = {"ecommerce": "#4C72B0", "pharmacy": "#55A868", "marketplace": "#DD8452"}
 
-for domain in pivot_events.columns:
-    color = domain_colors.get(domain, "#8172B2")
-    axes[0].plot(pivot_events.index, pivot_events[domain],
-                 label=domain, color=color, linewidth=1.5)
+fig, axes = plt.subplots(2, 2, figsize=(18, 12))
 
-axes[0].set_title("Daily Event Volume by Domain")
-axes[0].set_xlabel("Date")
-axes[0].set_ylabel("Event Count")
-axes[0].legend()
-axes[0].tick_params(axis="x", rotation=45)
+# --- Batch: Event Volume ---
+pivot_batch_events = batch_df.pivot(index="metric_date", columns="domain", values="total_events").fillna(0)
+for domain in pivot_batch_events.columns:
+    axes[0][0].plot(pivot_batch_events.index, pivot_batch_events[domain],
+                    label=domain, color=domain_colors.get(domain, "#8172B2"), linewidth=1.5)
+axes[0][0].set_title("Batch Data: Daily Event Volume (2017-2018)")
+axes[0][0].set_xlabel("Date")
+axes[0][0].set_ylabel("Event Count")
+axes[0][0].legend()
+axes[0][0].tick_params(axis="x", rotation=45)
 
-pivot_value = daily_df.pivot(
-    index="metric_date", columns="domain", values="total_value"
-).fillna(0)
+# --- Batch: Daily Value ---
+pivot_batch_value = batch_df.pivot(index="metric_date", columns="domain", values="total_value").fillna(0)
+for domain in pivot_batch_value.columns:
+    axes[1][0].plot(pivot_batch_value.index, pivot_batch_value[domain],
+                    label=domain, color=domain_colors.get(domain, "#8172B2"), linewidth=1.5)
+axes[1][0].set_title("Batch Data: Daily Value (2017-2018)")
+axes[1][0].set_xlabel("Date")
+axes[1][0].set_ylabel("Value")
+axes[1][0].legend()
+axes[1][0].tick_params(axis="x", rotation=45)
 
-for domain in pivot_value.columns:
-    color = domain_colors.get(domain, "#8172B2")
-    axes[1].plot(pivot_value.index, pivot_value[domain],
-                 label=domain, color=color, linewidth=1.5)
+# --- Streaming: Event Volume ---
+pivot_stream_events = streaming_df.pivot(index="metric_date", columns="domain", values="total_events").fillna(0)
+for domain in pivot_stream_events.columns:
+    axes[0][1].plot(pivot_stream_events.index, pivot_stream_events[domain],
+                    label=domain, color=domain_colors.get(domain, "#8172B2"), linewidth=1.5)
+axes[0][1].set_title("Streaming Data: Daily Event Volume (2019-2026)")
+axes[0][1].set_xlabel("Date")
+axes[0][1].set_ylabel("Event Count")
+axes[0][1].legend()
+axes[0][1].tick_params(axis="x", rotation=45)
 
-axes[1].set_title("Daily Value by Domain")
-axes[1].set_xlabel("Date")
-axes[1].set_ylabel("Value")
-axes[1].legend()
-axes[1].tick_params(axis="x", rotation=45)
+# --- Streaming: Daily Value ---
+pivot_stream_value = streaming_df.pivot(index="metric_date", columns="domain", values="total_value").fillna(0)
+for domain in pivot_stream_value.columns:
+    axes[1][1].plot(pivot_stream_value.index, pivot_stream_value[domain],
+                    label=domain, color=domain_colors.get(domain, "#8172B2"), linewidth=1.5)
+axes[1][1].set_title("Streaming Data: Daily Value (2019-2026)")
+axes[1][1].set_xlabel("Date")
+axes[1][1].set_ylabel("Value")
+axes[1][1].legend()
+axes[1][1].tick_params(axis="x", rotation=45)
 
 plt.tight_layout()
 plt.savefig("/tmp/cross_domain_daily.png", dpi=100, bbox_inches="tight")
