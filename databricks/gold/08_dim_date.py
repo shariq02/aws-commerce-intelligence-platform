@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - DIM DATE
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Generate date dimension covering Olist date range 2016-2020
-# MAGIC **Input:** Generated - no source table needed
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Generate date dimension covering Olist date range 2016-2020  
+# MAGIC **Input:** Generated - no source table needed  
 # MAGIC **Output:** acip.gold.dim_date
 
 # COMMAND ----------

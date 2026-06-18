@@ -1,12 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - FACT SELLER PERFORMANCE
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Build marketplace seller performance fact table
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Build marketplace seller performance fact table  
 # MAGIC **Input:** acip.silver.events (marketplace), acip.gold.dim_seller,
-# MAGIC            acip.gold.dim_date, acip.gold.dim_geography
+# MAGIC            acip.gold.dim_date, acip.gold.dim_geography  
 # MAGIC **Output:** acip.gold.fact_seller_performance
 
 # COMMAND ----------

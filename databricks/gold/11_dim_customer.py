@@ -1,13 +1,13 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - DIM CUSTOMER (SCD2)
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Build customer dimension with SCD2 on customer_segment changes
-# MAGIC **Input:** acip.silver.events (ecommerce domain)
-# MAGIC **Output:** acip.gold.dim_customer (SCD2)
-# MAGIC **SCD2 Logic:** Tracks customer_segment changes over time
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Build customer dimension with SCD2 on customer_segment changes  
+# MAGIC **Input:** acip.silver.events (ecommerce domain)  
+# MAGIC **Output:** acip.gold.dim_customer (SCD2)  
+# MAGIC **SCD2 Logic:** Tracks customer_segment changes over time  
 # MAGIC **Rollback:** RESTORE TABLE acip.gold.dim_customer TO VERSION AS OF N
 
 # COMMAND ----------

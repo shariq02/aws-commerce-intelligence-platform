@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - DIM GEOGRAPHY
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Build geography dimension from ecommerce and marketplace payloads
-# MAGIC **Input:** acip.silver.events (ecommerce domain)
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Build geography dimension from ecommerce and marketplace payloads  
+# MAGIC **Input:** acip.silver.events (ecommerce domain)  
 # MAGIC **Output:** acip.gold.dim_geography
 
 # COMMAND ----------

@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - AGG CUSTOMER SEGMENTS
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Customer segment KPIs from fact_transactions
-# MAGIC **Input:** acip.gold.fact_transactions, acip.gold.dim_customer
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Customer segment KPIs from fact_transactions  
+# MAGIC **Input:** acip.gold.fact_transactions, acip.gold.dim_customer  
 # MAGIC **Output:** acip.gold.agg_customer_segments
 
 # COMMAND ----------

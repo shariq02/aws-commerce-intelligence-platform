@@ -1,13 +1,13 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - DIM SELLER (SCD2)
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Build seller dimension with SCD2 on seller_tier changes
-# MAGIC **Input:** acip.silver.events (marketplace domain)
-# MAGIC **Output:** acip.gold.dim_seller (SCD2)
-# MAGIC **SCD2 Logic:** Tracks seller_tier changes over time
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Build seller dimension with SCD2 on seller_tier changes  
+# MAGIC **Input:** acip.silver.events (marketplace domain)  
+# MAGIC **Output:** acip.gold.dim_seller (SCD2)  
+# MAGIC **SCD2 Logic:** Tracks seller_tier changes over time  
 # MAGIC **Rollback:** RESTORE TABLE acip.gold.dim_seller TO VERSION AS OF N
 
 # COMMAND ----------
