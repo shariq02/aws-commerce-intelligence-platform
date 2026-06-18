@@ -1,13 +1,13 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## SILVER - ECOMMERCE TRANSFORMATION
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Transform Bronze ecommerce tables to universal silver.events schema
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Transform Bronze ecommerce tables to universal silver.events schema  
 # MAGIC **Input:** acip.bronze.orders, order_items, order_payments, customers,
-# MAGIC            products, order_reviews, category_translations
-# MAGIC **Output:** acip.silver.events (mode=OVERWRITE - resets silver.events entirely)
+# MAGIC            products, order_reviews, category_translations  
+# MAGIC **Output:** acip.silver.events (mode=OVERWRITE - resets silver.events entirely)  
 # MAGIC **Rollback:** If this notebook fails, rerun it - overwrite is idempotent
 
 # COMMAND ----------

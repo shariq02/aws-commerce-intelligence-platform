@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - FACT INVENTORY SNAPSHOTS
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Build pharmacy inventory fact table joining to dim_product and dim_date
-# MAGIC **Input:** acip.silver.events (pharmacy), acip.gold.dim_product, acip.gold.dim_date
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Build pharmacy inventory fact table joining to dim_product and dim_date  
+# MAGIC **Input:** acip.silver.events (pharmacy), acip.gold.dim_product, acip.gold.dim_date  
 # MAGIC **Output:** acip.gold.fact_inventory_snapshots
 
 # COMMAND ----------
@@ -70,7 +70,7 @@ pharmacy = silver.filter(F.col("domain") == "pharmacy") \
         F.col("event_type"),
         F.col("correlation_id"),
         F.col("occurred_at"),
-        F.to_date(F.substring(F.col("occurred_at"), 1, 10)).alias("event_date"),
+        F.to_date(F.expr("try_cast(occurred_at as date)")).alias("event_date"),
         F.col("p.product_id").alias("product_id"),
         F.col("p.category").alias("category"),
         F.col("p.quantity").alias("quantity"),

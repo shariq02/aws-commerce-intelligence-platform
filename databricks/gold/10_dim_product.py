@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - DIM PRODUCT
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Build product dimension from pharmacy and marketplace payloads
-# MAGIC **Input:** acip.silver.events (pharmacy and marketplace domains)
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Build product dimension from pharmacy and marketplace payloads  
+# MAGIC **Input:** acip.silver.events (pharmacy and marketplace domains)  
 # MAGIC **Output:** acip.gold.dim_product (SCD1 - overwrite on change)
 
 # COMMAND ----------

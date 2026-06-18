@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - AGG DAILY DOMAIN METRICS
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Daily event count and value aggregates per domain
-# MAGIC **Input:** acip.silver.events (all domains)
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Daily event count and value aggregates per domain  
+# MAGIC **Input:** acip.silver.events (all domains)  
 # MAGIC **Output:** acip.gold.agg_daily_domain_metrics
 
 # COMMAND ----------
