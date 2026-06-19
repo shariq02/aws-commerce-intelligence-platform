@@ -9,12 +9,14 @@
 from pyspark.sql import SparkSession
 import json
 
+# COMMAND ----------
+
 spark = SparkSession.builder.getOrCreate()
 
 CATALOG = "acip"
 spark.sql(f"USE CATALOG {CATALOG}")
 
-SCHEMAS_TO_EXPORT = ["gold", "quality", "dbt_marts"]
+SCHEMAS_TO_EXPORT = ["gold", "quality", "dbt_marts_dbt_marts"]
 
 # dbt intermediate and staging views - exclude from export
 SKIP_TABLES = {
@@ -223,4 +225,3 @@ for schema in SCHEMAS_TO_EXPORT:
 
 print("\n" + "=" * 70)
 print("NEXT STEP: Run scripts/download_acip_tables.py locally")
-print("=" * 70)
