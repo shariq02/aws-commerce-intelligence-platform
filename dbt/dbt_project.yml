@@ -1,0 +1,29 @@
+name: acip_dbt
+version: '1.0.0'
+config-version: 2
+
+profile: acip_dbt
+
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"
+clean-targets:
+  - "target"
+  - "dbt_packages"
+
+models:
+  acip_dbt:
+    staging:
+      +materialized: view
+      +schema: dbt_marts
+    intermediate:
+      +materialized: view
+      +schema: dbt_marts
+    marts:
+      +materialized: table
+      +schema: dbt_marts

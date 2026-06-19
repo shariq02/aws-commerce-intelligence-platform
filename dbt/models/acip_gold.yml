@@ -1,0 +1,27 @@
+version: 2
+
+sources:
+  - name: gold
+    catalog: acip
+    schema: gold
+    tables:
+      - name: dim_date
+        description: "Date dimension table"
+      - name: dim_geography
+        description: "Geography dimension table"
+      - name: dim_product
+        description: "Product dimension table"
+      - name: dim_customer
+        description: "Customer SCD2 dimension table"
+      - name: dim_seller
+        description: "Seller SCD2 dimension table"
+      - name: fact_transactions
+        description: "Ecommerce transactions fact table"
+      - name: fact_inventory_snapshots
+        description: "Pharmacy inventory snapshots fact table"
+      - name: fact_seller_performance
+        description: "Marketplace seller performance fact table"
+      - name: agg_daily_domain_metrics
+        description: "Daily aggregated domain metrics"
+      - name: agg_customer_segments
+        description: "Customer segmentation aggregation table"
