@@ -11,6 +11,7 @@ import csv
 import json
 import hashlib
 import time
+import sys
 from pathlib import Path
 from datetime import datetime
 from dotenv import load_dotenv
@@ -18,30 +19,31 @@ import psycopg2
 
 load_dotenv()
 
-POSTGRES_HOST = os.getenv("POSTGRES_HOST", "172.31.32.1")
+POSTGRES_HOST = os.getenv("POSTGRES_HOST")
 POSTGRES_PORT = os.getenv("POSTGRES_PORT", "5432")
-POSTGRES_DB = os.getenv("POSTGRES_DB", "acip")
-POSTGRES_USER = os.getenv("POSTGRES_USER", "postgres")
-POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD", "0940")
+POSTGRES_DB = os.getenv("POSTGRES_DB")
+POSTGRES_USER = os.getenv("POSTGRES_USER")
+POSTGRES_PASSWORD = os.getenv("POSTGRES_PASSWORD")
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "acip_export"
 CHECKPOINT_FILE = DATA_DIR / ".postgres_checkpoint.json"
 
 CHUNK_SIZE = 50_000
 
-# Maps ACIP schema name to PostgreSQL target schema
 SCHEMA_MAP = {
     "gold": "acip_gold",
     "quality": "acip_quality",
-    "dbt_marts": "acip_dbt_marts",
+    "dbt_marts_dbt_marts": "acip_dbt_marts",
 }
 
 print("=" * 70)
 print("ACIP POSTGRES LOADER")
 print("=" * 70)
+print(f"Host:     {POSTGRES_HOST}")
 print(f"Database: {POSTGRES_DB}")
 print(f"Schemas:  {', '.join(SCHEMA_MAP.values())}")
+print(f"Data dir: {DATA_DIR}")
 
 
 # ---------------------------------------------------------------------------
@@ -93,18 +95,49 @@ def build_column_ddl(headers):
 # PostgreSQL helpers
 # ---------------------------------------------------------------------------
 
-def get_connection():
+def get_connection(database=None):
     return psycopg2.connect(
         host=POSTGRES_HOST,
         port=POSTGRES_PORT,
-        database=POSTGRES_DB,
+        database=database or POSTGRES_DB,
         user=POSTGRES_USER,
         password=POSTGRES_PASSWORD
     )
 
 
-def run_sql(sql):
-    conn = get_connection()
+def ensure_database_exists():
+    """Connect to default postgres db and create acip if it does not exist."""
+    print("\nChecking PostgreSQL connection...")
+    try:
+        conn = get_connection(database="postgres")
+        conn.autocommit = True
+        cur = conn.cursor()
+
+        cur.execute("SELECT version()")
+        version = cur.fetchone()[0]
+        print(f"Connected: {version[:50]}")
+
+        cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (POSTGRES_DB,))
+        exists = cur.fetchone()
+
+        if not exists:
+            print(f"Database '{POSTGRES_DB}' not found -- creating...")
+            cur.execute(f"CREATE DATABASE {POSTGRES_DB}")
+            print(f"Database '{POSTGRES_DB}' created")
+        else:
+            print(f"Database '{POSTGRES_DB}': OK")
+
+        cur.close()
+        conn.close()
+
+    except Exception as e:
+        print(f"\nERROR: Could not connect to PostgreSQL: {e}")
+        print("Check POSTGRES_HOST, POSTGRES_USER, POSTGRES_PASSWORD in .env")
+        sys.exit(1)
+
+
+def run_sql(sql, database=None):
+    conn = get_connection(database=database)
     conn.autocommit = True
     cur = conn.cursor()
     cur.execute(sql)
@@ -153,13 +186,13 @@ def load_via_copy_expert(csv_file, pg_schema, table_name):
     t0 = time.time()
     with open(csv_file, "r", encoding="utf-8") as f:
         cur.copy_expert(copy_sql, f)
-    print(f"  Loaded in {time.time() - t0:.1f}s")
+    print(f"    Loaded in {time.time() - t0:.1f}s")
     cur.close()
     conn.close()
 
 
 def load_via_chunked(csv_file, pg_schema, table_name, headers):
-    print(f"  Falling back to chunked insert ({CHUNK_SIZE:,} rows/chunk)...")
+    print(f"    Falling back to chunked insert ({CHUNK_SIZE:,} rows/chunk)...")
     conn = get_connection()
     conn.autocommit = False
     cur = conn.cursor()
@@ -183,7 +216,7 @@ def load_via_chunked(csv_file, pg_schema, table_name, headers):
                 cur.executemany(insert_sql, batch)
                 conn.commit()
                 total += len(batch)
-                print(f"    Chunk {chunk_n}: {total:,} rows ({time.time()-t0:.1f}s)")
+                print(f"      Chunk {chunk_n}: {total:,} rows ({time.time()-t0:.1f}s)")
                 batch = []
         if batch:
             cur.executemany(insert_sql, batch)
@@ -213,7 +246,7 @@ def load_table(csv_file, pg_schema, table_name, checkpoint):
     headers, csv_rows, csv_size_mb = get_csv_info(csv_file)
     csv_hash = get_csv_hash(csv_file)
 
-    print(f"    CSV: {csv_rows:,} rows, {len(headers)} cols, {csv_size_mb:.1f} MB")
+    print(f"    CSV:  {csv_rows:,} rows, {len(headers)} cols, {csv_size_mb:.1f} MB")
 
     prev = checkpoint.get(checkpoint_key, {})
 
@@ -233,7 +266,7 @@ def load_table(csv_file, pg_schema, table_name, checkpoint):
 
     loaded_ok = False
 
-    print(f"    Loading via copy_expert...")
+    print(f"    Loading {csv_size_mb:.1f} MB via copy_expert...")
     try:
         load_via_copy_expert(csv_file, pg_schema, table_name)
         loaded_ok = True
@@ -277,17 +310,20 @@ def load_table(csv_file, pg_schema, table_name, checkpoint):
 # ---------------------------------------------------------------------------
 
 def main():
-    if not POSTGRES_PASSWORD:
-        print("\nERROR: POSTGRES_PASSWORD not found in .env")
-        return
+    ensure_database_exists()
 
-    # Create PostgreSQL schemas
+    print("\nCreating schemas...")
     for pg_schema in SCHEMA_MAP.values():
         run_sql(f"CREATE SCHEMA IF NOT EXISTS {pg_schema}")
-        print(f"Schema ready: {pg_schema}")
+        print(f"  Schema ready: {pg_schema}")
 
     checkpoint = load_checkpoint()
     print(f"\nPreviously loaded: {len(checkpoint)} tables")
+
+    if not DATA_DIR.exists():
+        print(f"\nERROR: Data directory not found: {DATA_DIR}")
+        print("Run download_acip_tables.py first")
+        sys.exit(1)
 
     overall_start = datetime.now()
     results = {}
@@ -296,7 +332,7 @@ def main():
         schema_dir = DATA_DIR / acip_schema
 
         if not schema_dir.exists():
-            print(f"\n{acip_schema}: No data directory found -- skipping")
+            print(f"\n{acip_schema}: Directory not found -- skipping")
             continue
 
         csv_files = sorted(schema_dir.glob("*.csv"))
@@ -336,7 +372,7 @@ def main():
 
     print("\n" + "=" * 70)
     if not failed:
-        print("NEXT STEP: Run scripts/fix_acip_postgres_types.py")
+        print("NEXT STEP: Run scripts/utils/fix_acip_postgres_types.py")
     else:
         print("Fix errors above and re-run")
     print("=" * 70)

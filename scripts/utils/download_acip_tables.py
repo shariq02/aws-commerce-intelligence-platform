@@ -14,14 +14,14 @@ from dotenv import load_dotenv
 load_dotenv()
 
 DATABRICKS_HOST = os.getenv("DATABRICKS_HOST", "").rstrip("/")
-DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
+DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN_DBT")
 
 CATALOG = "acip"
 VOLUME_NAME = "acip_exports"
 
-SCHEMAS_TO_DOWNLOAD = ["gold", "quality", "dbt_marts"]
+SCHEMAS_TO_DOWNLOAD = ["gold", "quality", "dbt_marts_dbt_marts"]
 
-PROJECT_ROOT = Path(__file__).parent.parent
+PROJECT_ROOT = Path(__file__).parent.parent.parent
 DATA_DIR = PROJECT_ROOT / "data" / "acip_export"
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 
