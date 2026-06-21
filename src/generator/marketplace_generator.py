@@ -9,29 +9,32 @@ logger = logging.getLogger(__name__)
 TOPIC = "marketplace.events"
 
 # Fix applied June 2026:
-# SLA_THRESHOLDS and DISPATCH_TIME_PARAMS now include platinum and standard
-# to match actual seller tier distribution in Olist data
+# SLA thresholds and dispatch times now in minutes aligned with real-world
+# e-commerce shipping days. Previous values (45-180 mins) were unrealistic
+# causing 91% SLA breach rate. Real-world: platinum = 2 day SLA, new = 14 day SLA.
+
+# SLA thresholds in minutes -- realistic day-based targets
 SLA_THRESHOLDS = {
-    "platinum": 45,
-    "gold":     60,
-    "standard": 90,
-    "silver":   90,
-    "bronze":   120,
-    "new":      180,
+    "platinum": 2  * 1440,   # 2 days  = 2,880 mins
+    "gold":     3  * 1440,   # 3 days  = 4,320 mins
+    "standard": 5  * 1440,   # 5 days  = 7,200 mins
+    "silver":   7  * 1440,   # 7 days  = 10,080 mins
+    "bronze":   10 * 1440,   # 10 days = 14,400 mins
+    "new":      14 * 1440,   # 14 days = 20,160 mins
 }
 
+# Dispatch time params in minutes -- realistic e-commerce shipping times
+# Mean and std in minutes, corresponding to real day ranges
 DISPATCH_TIME_PARAMS = {
-    "platinum": {"mean": 30, "std": 10},
-    "gold":     {"mean": 45, "std": 15},
-    "standard": {"mean": 65, "std": 20},
-    "silver":   {"mean": 75, "std": 20},
-    "bronze":   {"mean": 100, "std": 25},
-    "new":      {"mean": 150, "std": 35},
+    "platinum": {"mean": 2  * 1440, "std": 720},    # avg 2 days  +/- 0.5 days
+    "gold":     {"mean": 3  * 1440, "std": 1440},   # avg 3 days  +/- 1 day
+    "standard": {"mean": 7  * 1440, "std": 2880},   # avg 7 days  +/- 2 days
+    "silver":   {"mean": 10 * 1440, "std": 2880},   # avg 10 days +/- 2 days
+    "bronze":   {"mean": 12 * 1440, "std": 4320},   # avg 12 days +/- 3 days
+    "new":      {"mean": 15 * 1440, "std": 4320},   # avg 15 days +/- 3 days
 }
 
-# Fix applied June 2026:
-# _assign_seller_tiers now assigns platinum/gold/standard/new
-# matching the tier names expected by Gold notebook 15 and validation
+# Tier thresholds by order count
 TIER_THRESHOLDS = {
     "platinum": 200,
     "gold":     100,
@@ -84,7 +87,6 @@ class MarketplaceGenerator(BaseGenerator):
         logger.info(f"Loaded {len(self.sellers_df)} sellers successfully.")
 
     def _assign_seller_tiers(self):
-        # Fix: use platinum/gold/standard/new to match Gold layer expectations
         seller_order_counts = (
             self.items_df.groupby("seller_id")["order_id"]
             .count()
@@ -122,7 +124,8 @@ class MarketplaceGenerator(BaseGenerator):
 
     def _get_dispatch_time(self, tier):
         params = DISPATCH_TIME_PARAMS.get(tier, DISPATCH_TIME_PARAMS["new"])
-        return max(10, int(random.gauss(params["mean"], params["std"])))
+        # Minimum 1 day (1440 mins) -- no same-day dispatch in this dataset
+        return max(1440, int(random.gauss(params["mean"], params["std"])))
 
     def _get_category(self, product_id):
         product = self.products_df[
@@ -135,11 +138,11 @@ class MarketplaceGenerator(BaseGenerator):
         return "other", "other"
 
     def _get_dispatch_speed_bucket(self, dispatch_time_days):
-        if dispatch_time_days <= 1:
+        if dispatch_time_days <= 2:
             return "express"
-        elif dispatch_time_days <= 3:
+        elif dispatch_time_days <= 5:
             return "fast"
-        elif dispatch_time_days <= 7:
+        elif dispatch_time_days <= 10:
             return "standard"
         else:
             return "slow"
@@ -172,14 +175,9 @@ class MarketplaceGenerator(BaseGenerator):
         self.publish(TOPIC, event, key=str(seller_id))
 
     def _publish_order_dispatched(self, seller_id, item, tier):
-        # Fix: added all missing fields to dispatch payload
-        # Previously only had: order_id, seller_id, listing_id,
-        # dispatch_time_mins, sla_threshold_mins, is_sla_breached, carrier
-        # Now includes: seller_tier, price, freight_value, dispatch_time_days,
-        # dispatch_speed_bucket, category, product_id, seller_state, seller_region
         dispatch_time_mins = self._get_dispatch_time(tier)
-        dispatch_time_days = round(dispatch_time_mins / 1440.0, 4)
-        sla_threshold = SLA_THRESHOLDS.get(tier, 90)
+        dispatch_time_days = round(dispatch_time_mins / 1440.0, 2)
+        sla_threshold = SLA_THRESHOLDS.get(tier, SLA_THRESHOLDS["new"])
         is_breached = dispatch_time_mins > sla_threshold
         dispatch_speed_bucket = self._get_dispatch_speed_bucket(dispatch_time_days)
         category, category_group = self._get_category(item["product_id"])
