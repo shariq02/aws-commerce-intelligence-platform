@@ -1,12 +1,17 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - DIM PRODUCT
-# MAGIC **AWS Commerce Intelligence Platform**  
-# MAGIC **Author:** Sharique Mohammad  
-# MAGIC **Date:** June 2026  
-# MAGIC **Purpose:** Build product dimension from pharmacy and marketplace payloads  
-# MAGIC **Input:** acip.silver.events (pharmacy and marketplace domains)  
+# MAGIC **AWS Commerce Intelligence Platform**
+# MAGIC **Author:** Sharique Mohammad
+# MAGIC **Date:** June 2026
+# MAGIC **Purpose:** Build product dimension from pharmacy and marketplace payloads
+# MAGIC **Input:** acip.silver.events (pharmacy and marketplace domains)
 # MAGIC **Output:** acip.gold.dim_product (SCD1 - overwrite on change)
+# MAGIC
+# MAGIC **Fix applied (June 2026):**
+# MAGIC   product_key was generated using F.abs(F.hash(product_id)) which produced
+# MAGIC   1 hash collision (duplicate primary key). Fixed to use
+# MAGIC   monotonically_increasing_id() which guarantees uniqueness.
 
 # COMMAND ----------
 
@@ -104,25 +109,40 @@ print("=" * 70)
 all_products = pharma_products.union(market_products) \
     .dropDuplicates(["product_id"])
 
-all_products = all_products.withColumn(
-    "product_key",
-    F.abs(F.hash(F.col("product_id"))).cast("long")
-)
-
 total = all_products.count()
-print(f"Total unique products: {total:,}")
+print(f"Total unique products before key generation: {total:,}")
 
 domain_dist = all_products.groupBy("domain").count().collect()
 print("\nProducts per domain:")
 for row in domain_dist:
     print(f"  {row['domain']}: {row['count']:,}")
 
+# COMMAND ----------
+
+# DBTITLE 1,STEP 4: Generate Surrogate Key
+print("STEP 4: GENERATE SURROGATE KEY")
+print("=" * 70)
+
+# FIX: monotonically_increasing_id() guarantees uniqueness
+# F.abs(F.hash(product_id)) had 1 hash collision causing duplicate product_key
+# monotonically_increasing_id() produces unique 64-bit integers, no collisions possible
+# Note: values are not sequential but are guaranteed unique within the dataset
+
+all_products = all_products.withColumn(
+    "product_key",
+    F.monotonically_increasing_id()
+)
+
+# Verify no duplicates
+dup_count = all_products.groupBy("product_key").count().filter(F.col("count") > 1).count()
+print(f"Duplicate product_key count: {dup_count} (expected 0)")
+
 display(all_products.limit(5))
 
 # COMMAND ----------
 
-# DBTITLE 1,STEP 4: Write Gold Table
-print("STEP 4: WRITE GOLD TABLE")
+# DBTITLE 1,STEP 5: Write Gold Table
+print("STEP 5: WRITE GOLD TABLE")
 print("=" * 70)
 
 all_products.write \
@@ -136,15 +156,20 @@ print(f"PASS: {TARGET_TABLE} written - {written:,} rows")
 
 # COMMAND ----------
 
-# DBTITLE 1,STEP 5: Verify
-print("STEP 5: VERIFY")
+# DBTITLE 1,STEP 6: Verify
+print("STEP 6: VERIFY")
 print("=" * 70)
 
 df = spark.table(TARGET_TABLE)
+total = df.count()
 null_product_key = df.filter(F.col("product_key").isNull()).count()
 null_product_id = df.filter(F.col("product_id").isNull()).count()
+dup_keys = df.groupBy("product_key").count().filter(F.col("count") > 1).count()
 
-print(f"Total rows: {df.count():,}")
+print(f"Total rows: {total:,}")
 print(f"Null product_key: {null_product_key}")
 print(f"Null product_id: {null_product_id}")
-print(f"\nPASS: dim_product verified" if null_product_key == 0 else "\nFAIL: null product_keys found")
+print(f"Duplicate product_key: {dup_keys}")
+
+status = "PASS" if null_product_key == 0 and dup_keys == 0 else "FAIL"
+print(f"\n{status}: dim_product verified")

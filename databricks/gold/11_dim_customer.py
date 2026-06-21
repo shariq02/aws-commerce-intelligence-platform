@@ -1,14 +1,19 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - DIM CUSTOMER (SCD2)
-# MAGIC **AWS Commerce Intelligence Platform**  
-# MAGIC **Author:** Sharique Mohammad  
-# MAGIC **Date:** June 2026  
-# MAGIC **Purpose:** Build customer dimension with SCD2 on customer_segment changes  
-# MAGIC **Input:** acip.silver.events (ecommerce domain)  
-# MAGIC **Output:** acip.gold.dim_customer (SCD2)  
-# MAGIC **SCD2 Logic:** Tracks customer_segment changes over time  
+# MAGIC **AWS Commerce Intelligence Platform**
+# MAGIC **Author:** Sharique Mohammad
+# MAGIC **Date:** June 2026
+# MAGIC **Purpose:** Build customer dimension with SCD2 on customer_segment changes
+# MAGIC **Input:** acip.silver.events (ecommerce domain)
+# MAGIC **Output:** acip.gold.dim_customer (SCD2)
+# MAGIC **SCD2 Logic:** Tracks customer_segment changes over time
 # MAGIC **Rollback:** RESTORE TABLE acip.gold.dim_customer TO VERSION AS OF N
+# MAGIC
+# MAGIC **Fix applied (June 2026):**
+# MAGIC   customer_key was generated using F.abs(F.hash(customer_id, segment, date))
+# MAGIC   which produced 2 hash collisions (duplicate primary keys).
+# MAGIC   Fixed to use monotonically_increasing_id() which guarantees uniqueness.
 
 # COMMAND ----------
 
@@ -16,6 +21,7 @@
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, StringType
+from pyspark.sql import Window
 
 # COMMAND ----------
 
@@ -74,8 +80,6 @@ print(f"Raw customer records from silver: {customers_raw.count():,}")
 print("STEP 2: GET LATEST RECORD PER CUSTOMER")
 print("=" * 70)
 
-from pyspark.sql import Window
-
 window = Window.partitionBy("customer_id").orderBy(F.col("event_date").desc())
 
 customers_latest = customers_raw \
@@ -100,22 +104,26 @@ print("=" * 70)
 if not spark.catalog.tableExists(TARGET_TABLE):
     print("First run - inserting all records as current")
 
-    dim_customer = customers_latest.select(
-        F.abs(F.hash(
-            F.col("customer_id"),
-            F.col("customer_segment"),
-            F.col("event_date").cast("string")
-        )).cast("long").alias("customer_key"),
-        F.col("customer_id"),
-        F.col("customer_unique_id"),
-        F.col("customer_segment"),
-        F.col("region"),
-        F.col("state_region"),
-        F.col("customer_state"),
-        F.col("event_date").alias("effective_date"),
-        F.lit("9999-12-31").cast("date").alias("expiry_date"),
-        F.lit(True).alias("is_current")
-    )
+    # FIX: monotonically_increasing_id() guarantees uniqueness
+    # F.abs(F.hash(customer_id, segment, date)) produced 2 hash collisions
+    dim_customer = customers_latest \
+        .withColumn("customer_key", F.monotonically_increasing_id()) \
+        .select(
+            "customer_key",
+            "customer_id",
+            "customer_unique_id",
+            "customer_segment",
+            "region",
+            "state_region",
+            "customer_state",
+            F.col("event_date").alias("effective_date"),
+            F.lit("9999-12-31").cast("date").alias("expiry_date"),
+            F.lit(True).alias("is_current")
+        )
+
+    # Verify no duplicates before writing
+    dup_count = dim_customer.groupBy("customer_key").count().filter(F.col("count") > 1).count()
+    print(f"Duplicate customer_key before write: {dup_count} (expected 0)")
 
     dim_customer.write \
         .format("delta") \
@@ -125,12 +133,12 @@ if not spark.catalog.tableExists(TARGET_TABLE):
 
 else:
     print("Subsequent run - applying SCD2 MERGE")
+    customers_latest.createOrReplaceTempView("customers_latest_view")
 
     spark.sql(f"""
         MERGE INTO {TARGET_TABLE} AS target
         USING (
             SELECT
-                ABS(HASH(customer_id, customer_segment, CAST(event_date AS STRING))) AS customer_key,
                 customer_id,
                 customer_unique_id,
                 customer_segment,
@@ -148,9 +156,10 @@ else:
             INSERT (customer_key, customer_id, customer_unique_id, customer_segment,
                     region, state_region, customer_state,
                     effective_date, expiry_date, is_current)
-            VALUES (source.customer_key, source.customer_id, source.customer_unique_id,
-                    source.customer_segment, source.region, source.state_region,
-                    source.customer_state, source.effective_date, DATE('9999-12-31'), TRUE)
+            VALUES (monotonically_increasing_id(), source.customer_id,
+                    source.customer_unique_id, source.customer_segment,
+                    source.region, source.state_region, source.customer_state,
+                    source.effective_date, DATE('9999-12-31'), TRUE)
     """)
 
 written = spark.table(TARGET_TABLE).count()
@@ -168,11 +177,13 @@ total = df.count()
 current = df.filter(F.col("is_current")).count()
 historical = df.filter(~F.col("is_current")).count()
 null_key = df.filter(F.col("customer_key").isNull()).count()
+dup_keys = df.groupBy("customer_key").count().filter(F.col("count") > 1).count()
 
-print(f"Total rows:     {total:,}")
-print(f"Current:        {current:,}")
-print(f"Historical:     {historical:,}")
-print(f"Null keys:      {null_key}")
+print(f"Total rows:        {total:,}")
+print(f"Current:           {current:,}")
+print(f"Historical:        {historical:,}")
+print(f"Null keys:         {null_key}")
+print(f"Duplicate keys:    {dup_keys}")
 
 segment_dist = df.filter(F.col("is_current")).groupBy("customer_segment").count().collect()
 print("\nCurrent customer segment distribution:")
@@ -180,6 +191,7 @@ for row in segment_dist:
     pct = row["count"] / current * 100
     print(f"  {row['customer_segment']}: {row['count']:,} ({pct:.1f}%)")
 
-print(f"\nPASS: dim_customer SCD2 verified" if null_key == 0 else "\nFAIL: null keys found")
+status = "PASS" if null_key == 0 and dup_keys == 0 else "FAIL"
+print(f"\n{status}: dim_customer SCD2 verified")
 
 display(df.limit(5))

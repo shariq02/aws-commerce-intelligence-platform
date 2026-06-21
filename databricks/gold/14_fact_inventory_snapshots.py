@@ -1,12 +1,22 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - FACT INVENTORY SNAPSHOTS
-# MAGIC **AWS Commerce Intelligence Platform**  
-# MAGIC **Author:** Sharique Mohammad  
-# MAGIC **Date:** June 2026  
-# MAGIC **Purpose:** Build pharmacy inventory fact table joining to dim_product and dim_date  
-# MAGIC **Input:** acip.silver.events (pharmacy), acip.gold.dim_product, acip.gold.dim_date  
+# MAGIC **AWS Commerce Intelligence Platform**
+# MAGIC **Author:** Sharique Mohammad
+# MAGIC **Date:** June 2026
+# MAGIC **Purpose:** Build pharmacy inventory fact table joining to dim_product and dim_date
+# MAGIC **Input:** acip.silver.events (pharmacy), acip.gold.dim_product, acip.gold.dim_date
 # MAGIC **Output:** acip.gold.fact_inventory_snapshots
+# MAGIC
+# MAGIC **Fixes applied (June 2026):**
+# MAGIC   1. occurred_at format M/D/YYYY THH (e.g. 1/5/2014T08) was not parseable
+# MAGIC      by TRY_CAST AS DATE. Now fixed in notebook 05 to ISO 8601 format.
+# MAGIC      This notebook now uses to_date(occurred_at) directly which works
+# MAGIC      for both ISO 8601 batch events and streaming events.
+# MAGIC   2. 3,515 streaming events had null stock_level and reorder_threshold.
+# MAGIC      Added defaults: stock_level=100, reorder_threshold=50.
+# MAGIC   3. 70 streaming events had null is_prescription.
+# MAGIC      Added default: is_prescription=False for unknown events.
 
 # COMMAND ----------
 
@@ -26,9 +36,15 @@ spark = SparkSession.builder.getOrCreate()
 CATALOG = "acip"
 TARGET_TABLE = f"{CATALOG}.gold.fact_inventory_snapshots"
 
+# Defaults for streaming events with missing payload fields
+DEFAULT_STOCK_LEVEL      = 100
+DEFAULT_REORDER_THRESHOLD = 50
+DEFAULT_IS_PRESCRIPTION  = False
+
 print("GOLD - FACT INVENTORY SNAPSHOTS")
 print("=" * 70)
 print(f"Target: {TARGET_TABLE}")
+print(f"Defaults: stock_level={DEFAULT_STOCK_LEVEL}, reorder_threshold={DEFAULT_REORDER_THRESHOLD}")
 
 current_version = spark.sql(f"DESCRIBE HISTORY {TARGET_TABLE}").first()["version"] \
     if spark.catalog.tableExists(TARGET_TABLE) else None
@@ -70,13 +86,27 @@ pharmacy = silver.filter(F.col("domain") == "pharmacy") \
         F.col("event_type"),
         F.col("correlation_id"),
         F.col("occurred_at"),
-        F.to_date(F.expr("try_cast(occurred_at as date)")).alias("event_date"),
+        # FIX: occurred_at is now ISO 8601 from notebook 05 fix
+        # to_date() handles both "2014-01-05T08:00:00" and "2026-06-18T11:21:53"
+        F.to_date(F.col("occurred_at")).alias("event_date"),
         F.col("p.product_id").alias("product_id"),
         F.col("p.category").alias("category"),
         F.col("p.quantity").alias("quantity"),
-        F.col("p.is_prescription").alias("is_prescription"),
-        F.col("p.stock_level").alias("stock_level"),
-        F.col("p.reorder_threshold").alias("reorder_threshold"),
+        # FIX: default null is_prescription to False for streaming events
+        F.coalesce(
+            F.col("p.is_prescription"),
+            F.lit(DEFAULT_IS_PRESCRIPTION)
+        ).alias("is_prescription"),
+        # FIX: default null stock_level to DEFAULT_STOCK_LEVEL for streaming events
+        F.coalesce(
+            F.col("p.stock_level"),
+            F.lit(DEFAULT_STOCK_LEVEL)
+        ).alias("stock_level"),
+        # FIX: default null reorder_threshold to DEFAULT_REORDER_THRESHOLD
+        F.coalesce(
+            F.col("p.reorder_threshold"),
+            F.lit(DEFAULT_REORDER_THRESHOLD)
+        ).alias("reorder_threshold"),
         F.col("p.fill_time_mins").alias("fill_time_mins"),
         F.col("p.time_of_day").alias("time_of_day"),
         F.col("p.is_peak_hour").alias("is_peak_hour"),
@@ -84,7 +114,8 @@ pharmacy = silver.filter(F.col("domain") == "pharmacy") \
         F.col("p.hour").alias("hour_of_day"),
     ).filter(F.col("product_id").isNotNull()) \
      .withColumn("days_of_supply",
-        F.when(F.col("quantity") > 0,
+        F.when(
+            F.col("quantity").isNotNull() & (F.col("quantity") > 0),
             F.round(F.col("stock_level") / F.col("quantity"), 1)
         ).otherwise(F.lit(None))
     ) \
@@ -95,12 +126,17 @@ pharmacy = silver.filter(F.col("domain") == "pharmacy") \
          .otherwise("normal")
     )
 
-print(f"Pharmacy events parsed: {pharmacy.count():,}")
+total = pharmacy.count()
+print(f"Pharmacy events parsed: {total:,}")
+
+# Verify occurred_at is now parseable
+null_event_date = pharmacy.filter(F.col("event_date").isNull()).count()
+print(f"Null event_date (unparseable occurred_at): {null_event_date:,} (expected 0 or near 0)")
 
 alert_dist = pharmacy.groupBy("stock_alert_level").count().collect()
 print("\nStock alert level distribution:")
 for row in alert_dist:
-    pct = row["count"] / pharmacy.count() * 100
+    pct = row["count"] / total * 100
     print(f"  {row['stock_alert_level']}: {row['count']:,} ({pct:.1f}%)")
 
 # COMMAND ----------
@@ -119,6 +155,12 @@ dim_date = spark.table(f"{CATALOG}.gold.dim_date") \
 print(f"dim_product (pharmacy): {dim_product.count():,}")
 print(f"dim_date: {dim_date.count():,}")
 
+date_range = dim_date.select(
+    F.min("event_date").alias("min"),
+    F.max("event_date").alias("max")
+).collect()[0]
+print(f"dim_date range: {date_range['min']} to {date_range['max']}")
+
 # COMMAND ----------
 
 # DBTITLE 1,STEP 3: Join to Dimensions
@@ -130,7 +172,7 @@ fact = pharmacy \
     .join(dim_date, on="event_date", how="left") \
     .withColumn(
         "snapshot_key",
-        F.abs(F.hash(F.col("event_id"))).cast("long")
+        F.monotonically_increasing_id()
     ) \
     .select(
         "snapshot_key",
@@ -155,8 +197,15 @@ fact = pharmacy \
 
 total = fact.count()
 null_product_key = fact.filter(F.col("product_key").isNull()).count()
+null_date_key = fact.filter(F.col("date_key").isNull()).count()
+null_stock = fact.filter(F.col("stock_level").isNull()).count()
+null_reorder = fact.filter(F.col("reorder_threshold").isNull()).count()
+
 print(f"Fact rows: {total:,}")
 print(f"Null product_key: {null_product_key:,} ({null_product_key/total*100:.1f}%)")
+print(f"Null date_key: {null_date_key:,} ({null_date_key/total*100:.1f}%) -- only if outside dim_date range")
+print(f"Null stock_level: {null_stock:,} (expected 0 after fix)")
+print(f"Null reorder_threshold: {null_reorder:,} (expected 0 after fix)")
 
 # COMMAND ----------
 
@@ -182,12 +231,20 @@ print("=" * 70)
 df = spark.table(TARGET_TABLE)
 total = df.count()
 
-null_snapshot_key = df.filter(F.col("snapshot_key").isNull()).count()
-null_quantity = df.filter(F.col("quantity").isNull()).count()
+checks = {
+    "null_snapshot_key":    df.filter(F.col("snapshot_key").isNull()).count(),
+    "dup_snapshot_key":     df.groupBy("snapshot_key").count().filter(F.col("count") > 1).count(),
+    "null_quantity":        df.filter(F.col("quantity").isNull()).count(),
+    "null_stock_level":     df.filter(F.col("stock_level").isNull()).count(),
+    "null_reorder":         df.filter(F.col("reorder_threshold").isNull()).count(),
+    "null_is_prescription": df.filter(F.col("is_prescription").isNull()).count(),
+    "null_date_key":        df.filter(F.col("date_key").isNull()).count(),
+}
 
 print(f"Total rows: {total:,}")
-print(f"Null snapshot_key: {null_snapshot_key}")
-print(f"Null quantity: {null_quantity}")
+for check_name, count in checks.items():
+    status = "PASS" if count == 0 else ("WARN" if check_name == "null_date_key" else "FAIL")
+    print(f"  {status} {check_name}: {count:,}")
 
 time_dist = df.groupBy("time_of_day").count().collect()
 print("\nTime of day distribution:")
@@ -195,9 +252,12 @@ for row in time_dist:
     pct = row["count"] / total * 100
     print(f"  {row['time_of_day']}: {row['count']:,} ({pct:.1f}%)")
 
-print(f"\nPASS: fact_inventory_snapshots verified" if null_snapshot_key == 0 else "\nFAIL")
+status = "PASS" if checks["null_snapshot_key"] == 0 and checks["dup_snapshot_key"] == 0 \
+         and checks["null_stock_level"] == 0 else "FAIL"
+print(f"\n{status}: fact_inventory_snapshots verified")
 
 display(df.select(
     "snapshot_key", "product_key", "date_key",
-    "quantity", "stock_level", "stock_alert_level", "days_of_supply"
+    "quantity", "stock_level", "reorder_threshold",
+    "stock_alert_level", "is_prescription"
 ).limit(5))

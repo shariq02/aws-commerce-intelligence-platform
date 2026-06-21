@@ -1,13 +1,21 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - FACT TRANSACTIONS
-# MAGIC **AWS Commerce Intelligence Platform**  
-# MAGIC **Author:** Sharique Mohammad  
-# MAGIC **Date:** June 2026  
-# MAGIC **Purpose:** Build ecommerce fact table joining to dim_customer, dim_date, dim_geography  
+# MAGIC **AWS Commerce Intelligence Platform**
+# MAGIC **Author:** Sharique Mohammad
+# MAGIC **Date:** June 2026
+# MAGIC **Purpose:** Build ecommerce fact table joining to dim_customer, dim_date, dim_geography
 # MAGIC **Input:** acip.silver.events (ecommerce), acip.gold.dim_customer,
-# MAGIC            acip.gold.dim_date, acip.gold.dim_geography  
+# MAGIC            acip.gold.dim_date, acip.gold.dim_geography
 # MAGIC **Output:** acip.gold.fact_transactions
+# MAGIC
+# MAGIC **Fixes applied (June 2026):**
+# MAGIC   1. transaction_key: F.abs(F.hash(event_id)) had 12 hash collisions.
+# MAGIC      Fixed to monotonically_increasing_id() which guarantees uniqueness.
+# MAGIC   2. 360 streaming events had null order_status, zero total_amount,
+# MAGIC      and placeholder payment_method. Added defaults and filters.
+# MAGIC   3. 360 duplicate order.placed events from streaming duplicating batch.
+# MAGIC      Added deduplication on event_id before write.
 
 # COMMAND ----------
 
@@ -16,7 +24,7 @@ from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import (
     StructType, StructField, StringType, DoubleType,
-    BooleanType, IntegerType, LongType
+    BooleanType, IntegerType
 )
 
 # COMMAND ----------
@@ -26,6 +34,8 @@ spark = SparkSession.builder.getOrCreate()
 
 CATALOG = "acip"
 TARGET_TABLE = f"{CATALOG}.gold.fact_transactions"
+
+PLACEHOLDER_VALUES = ["-", "N/A", "NA", "none", "null", "NULL", ".", "unknown"]
 
 print("GOLD - FACT TRANSACTIONS")
 print("=" * 70)
@@ -83,11 +93,22 @@ ecommerce = silver.filter(F.col("domain") == "ecommerce") \
         F.col("p.customer_segment").alias("customer_segment"),
         F.col("p.order_value_tier").alias("order_value_tier"),
         F.col("p.region").alias("region"),
-        F.col("p.total_amount").alias("total_amount"),
-        F.col("p.payment_method").alias("payment_method"),
+        # FIX: filter zero total_amount and set null for invalid amounts
+        F.when(
+            F.col("p.total_amount").isNotNull() & (F.col("p.total_amount") > 0),
+            F.col("p.total_amount")
+        ).otherwise(F.lit(None)).alias("total_amount"),
+        # FIX: replace placeholder payment_method with null
+        F.when(
+            F.col("p.payment_method").isNotNull() &
+            ~F.trim(F.col("p.payment_method")).isin(PLACEHOLDER_VALUES) &
+            (F.trim(F.col("p.payment_method")) != ""),
+            F.col("p.payment_method")
+        ).otherwise(F.lit(None)).alias("payment_method"),
         F.col("p.is_installment").alias("is_installment"),
         F.col("p.max_installments").alias("max_installments"),
-        F.col("p.order_status").alias("order_status"),
+        # FIX: default null order_status to 'unknown' for streaming events
+        F.coalesce(F.col("p.order_status"), F.lit("unknown")).alias("order_status"),
         F.col("p.item_count").alias("item_count"),
         F.col("p.is_multi_item").alias("is_multi_item"),
         F.col("p.is_multi_seller").alias("is_multi_seller"),
@@ -111,8 +132,24 @@ for row in event_dist:
 
 # COMMAND ----------
 
-# DBTITLE 1,STEP 2: Load Dimensions
-print("STEP 2: LOAD DIMENSIONS")
+# DBTITLE 1,STEP 2: Deduplicate on event_id
+print("STEP 2: DEDUPLICATE ON EVENT_ID")
+print("=" * 70)
+
+# FIX: 360 streaming events duplicated batch order.placed events
+# Deduplicate on event_id to keep one record per unique event
+before_dedup = ecommerce.count()
+ecommerce = ecommerce.dropDuplicates(["event_id"])
+after_dedup = ecommerce.count()
+
+print(f"Before dedup: {before_dedup:,}")
+print(f"After dedup:  {after_dedup:,}")
+print(f"Removed:      {before_dedup - after_dedup:,}")
+
+# COMMAND ----------
+
+# DBTITLE 1,STEP 3: Load Dimensions
+print("STEP 3: LOAD DIMENSIONS")
 print("=" * 70)
 
 dim_customer = spark.table(f"{CATALOG}.gold.dim_customer") \
@@ -131,8 +168,8 @@ print(f"dim_geography: {dim_geo.count():,}")
 
 # COMMAND ----------
 
-# DBTITLE 1,STEP 3: Join to Dimensions
-print("STEP 3: JOIN TO DIMENSIONS")
+# DBTITLE 1,STEP 4: Join to Dimensions
+print("STEP 4: JOIN TO DIMENSIONS")
 print("=" * 70)
 
 fact = ecommerce \
@@ -147,50 +184,63 @@ fact = ecommerce \
     .join(
         dim_geo.select("geo_key", "region"),
         on="region", how="left"
-    ) \
-    .withColumn(
-        "transaction_key",
-        F.abs(F.hash(F.col("event_id"))).cast("long")
-    ) \
-    .select(
-        "transaction_key",
-        "event_id",
-        "event_type",
-        "order_id",
-        "customer_key",
-        "date_key",
-        "geo_key",
-        "total_amount",
-        "payment_method",
-        "is_installment",
-        "max_installments",
-        "order_status",
-        "item_count",
-        "is_multi_item",
-        "is_multi_seller",
-        "fulfilment_time_mins",
-        "fulfilment_time_days",
-        "fulfilment_bucket",
-        "delivery_on_time",
-        "avg_review_score",
-        "review_sentiment",
-        "has_negative_review",
-        "return_reason",
-        "occurred_at"
     )
 
 total = fact.count()
 null_customer_key = fact.filter(F.col("customer_key").isNull()).count()
 null_date_key = fact.filter(F.col("date_key").isNull()).count()
+null_geo_key = fact.filter(F.col("geo_key").isNull()).count()
 
 print(f"Fact rows: {total:,}")
 print(f"Null customer_key: {null_customer_key:,} ({null_customer_key/total*100:.1f}%)")
 print(f"Null date_key: {null_date_key:,} ({null_date_key/total*100:.1f}%)")
+print(f"Null geo_key: {null_geo_key:,} ({null_geo_key/total*100:.1f}%)")
 
 # COMMAND ----------
 
-# DBTITLE 1,STEP 4: Write Gold Table
-print("STEP 4: WRITE GOLD TABLE")
+# DBTITLE 1,STEP 5: Generate Surrogate Key and Select Final Columns
+print("STEP 5: GENERATE SURROGATE KEY")
+print("=" * 70)
+
+# FIX: monotonically_increasing_id() guarantees uniqueness
+# F.abs(F.hash(event_id)) had 12 hash collisions causing duplicate transaction_keys
+fact = fact.withColumn(
+    "transaction_key",
+    F.monotonically_increasing_id()
+).select(
+    "transaction_key",
+    "event_id",
+    "event_type",
+    "order_id",
+    "customer_key",
+    "date_key",
+    "geo_key",
+    "total_amount",
+    "payment_method",
+    "is_installment",
+    "max_installments",
+    "order_status",
+    "item_count",
+    "is_multi_item",
+    "is_multi_seller",
+    "fulfilment_time_mins",
+    "fulfilment_time_days",
+    "fulfilment_bucket",
+    "delivery_on_time",
+    "avg_review_score",
+    "review_sentiment",
+    "has_negative_review",
+    "return_reason",
+    "occurred_at"
+)
+
+dup_keys = fact.groupBy("transaction_key").count().filter(F.col("count") > 1).count()
+print(f"Duplicate transaction_key: {dup_keys} (expected 0)")
+
+# COMMAND ----------
+
+# DBTITLE 1,STEP 6: Write Gold Table
+print("STEP 6: WRITE GOLD TABLE")
 print("=" * 70)
 
 fact.write \
@@ -204,8 +254,8 @@ print(f"PASS: {TARGET_TABLE} written - {written:,} rows")
 
 # COMMAND ----------
 
-# DBTITLE 1,STEP 5: Verify
-print("STEP 5: VERIFY")
+# DBTITLE 1,STEP 7: Verify
+print("STEP 7: VERIFY")
 print("=" * 70)
 
 df = spark.table(TARGET_TABLE)
@@ -213,14 +263,21 @@ total = df.count()
 
 checks = {
     "null_transaction_key": df.filter(F.col("transaction_key").isNull()).count(),
+    "dup_transaction_key":  df.groupBy("transaction_key").count().filter(F.col("count") > 1).count(),
     "null_event_id":        df.filter(F.col("event_id").isNull()).count(),
     "null_total_amount":    df.filter(F.col("total_amount").isNull()).count(),
+    "null_order_status":    df.filter(F.col("order_status").isNull()).count(),
+    "zero_total_amount":    df.filter(F.col("total_amount") == 0).count(),
+    "placeholder_payment":  df.filter(
+        F.col("payment_method").isNotNull() &
+        F.trim(F.col("payment_method")).isin(PLACEHOLDER_VALUES)
+    ).count(),
 }
 
 print(f"Total rows: {total:,}")
-for check, count in checks.items():
+for check_name, count in checks.items():
     status = "PASS" if count == 0 else "FAIL"
-    print(f"  {status} {check}: {count:,}")
+    print(f"  {status} {check_name}: {count:,}")
 
 event_dist = df.groupBy("event_type").count().collect()
 print("\nEvent type distribution:")
@@ -228,12 +285,11 @@ for row in event_dist:
     pct = row["count"] / total * 100
     print(f"  {row['event_type']}: {row['count']:,} ({pct:.1f}%)")
 
-fulfilment_dist = df.filter(
-    F.col("fulfilment_bucket").isNotNull()
-).groupBy("fulfilment_bucket").count().collect()
-print("\nFulfilment bucket distribution:")
-for row in fulfilment_dist:
-    print(f"  {row['fulfilment_bucket']}: {row['count']:,}")
+status_dist = df.groupBy("order_status").count().orderBy(F.col("count").desc()).collect()
+print("\nOrder status distribution:")
+for row in status_dist:
+    pct = row["count"] / total * 100
+    print(f"  {row['order_status']}: {row['count']:,} ({pct:.1f}%)")
 
 display(df.select(
     "transaction_key", "event_type", "order_id",
