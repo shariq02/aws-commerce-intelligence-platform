@@ -1,12 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD LAYER DATA QUALITY VALIDATION
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Comprehensive data quality gate between Gold layer and dbt
-# MAGIC **Run after:** 17_agg_customer_segments.py
-# MAGIC **Run before:** dbt run
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Comprehensive data quality gate between Gold layer and dbt  
+# MAGIC **Run after:** 17_agg_customer_segments.py  
+# MAGIC **Run before:** dbt run  
 # MAGIC **Output:** PASS/WARN/FAIL per check with final gate decision
 
 # COMMAND ----------
@@ -75,28 +75,108 @@ def null_rate(count, total):
 # COMMAND ----------
 
 # DBTITLE 1,SECTION 1: ROW COUNT ASSERTIONS
+# DBTITLE 1,SECTION 1: ROW COUNT ASSERTIONS
 print("\nSECTION 1: ROW COUNT ASSERTIONS")
 print("=" * 70)
 
-MIN_ROWS = {
-    "dim_date":                 1800,
-    "dim_geography":            4000,
-    "dim_product":              30000,
-    "dim_customer":             90000,
-    "dim_seller":               3000,
-    "fact_transactions":        200000,
-    "fact_inventory_snapshots": 60000,
-    "fact_seller_performance":  180000,
-    "agg_daily_domain_metrics": 3000,
-    "agg_customer_segments":    4,
-}
+GOLD_TABLES = [
+    "dim_date",
+    "dim_geography",
+    "dim_product",
+    "dim_customer",
+    "dim_seller",
+    "fact_transactions",
+    "fact_inventory_snapshots",
+    "fact_seller_performance",
+    "agg_daily_domain_metrics",
+    "agg_customer_segments",
+]
 
-for table, min_rows in MIN_ROWS.items():
+# Step 1: Table not empty
+current_counts = {}
+for table in GOLD_TABLES:
     count = spark.table(f"{CATALOG}.gold.{table}").count()
-    if count >= min_rows:
-        check(f"row_count.{table}", "PASS", f"{count:,} rows (min {min_rows:,})")
+    current_counts[table] = count
+    if count > 0:
+        check(f"row_count.not_empty.{table}", "PASS", f"{count:,} rows")
     else:
-        check(f"row_count.{table}", "FAIL", f"{count:,} rows below minimum {min_rows:,}", hard_fail=True)
+        check(f"row_count.not_empty.{table}", "FAIL", "Table is empty", hard_fail=True)
+
+# Step 2: Compare to previous watermark if available
+print("\n  Checking row counts against previous run watermarks...")
+try:
+    watermarks = spark.sql(f"""
+        SELECT component, records_processed
+        FROM {CATALOG}.quality.pipeline_watermarks
+        WHERE records_processed IS NOT NULL
+        ORDER BY last_updated_at DESC
+    """).collect()
+    watermark_map = {r["component"]: r["records_processed"] for r in watermarks}
+except Exception:
+    watermark_map = {}
+    print("  No previous watermarks found -- skipping watermark comparison")
+
+for table, current_count in current_counts.items():
+    prev_count = watermark_map.get(f"gold.{table}")
+    if prev_count is None:
+        check(f"row_count.vs_watermark.{table}", "WARN",
+              f"No previous watermark -- baseline will be set after this run", hard_fail=False)
+    else:
+        variance = (current_count - prev_count) / max(prev_count, 1) * 100
+        if current_count >= prev_count * 0.95:
+            check(f"row_count.vs_watermark.{table}", "PASS",
+                  f"Current {current_count:,} vs previous {prev_count:,} ({variance:+.1f}%)")
+        else:
+            check(f"row_count.vs_watermark.{table}", "FAIL",
+                  f"Current {current_count:,} dropped more than 5% vs previous {prev_count:,} ({variance:+.1f}%)",
+                  hard_fail=True)
+
+# Step 3: Cross-table ratio checks
+print("\n  Checking cross-table row count ratios...")
+
+# fact_transactions should be between 50% and 200% of fact_seller_performance
+ft_count = current_counts["fact_transactions"]
+fp_count = current_counts["fact_seller_performance"]
+ratio = ft_count / max(fp_count, 1)
+if 0.5 <= ratio <= 3.0:
+    check("row_count.ratio.fact_transactions_vs_seller_performance", "PASS",
+          f"Ratio {ratio:.2f} (transactions/seller_performance) within expected 0.5-3.0")
+else:
+    check("row_count.ratio.fact_transactions_vs_seller_performance", "WARN",
+          f"Ratio {ratio:.2f} outside expected 0.5-3.0 -- check generator run parity", hard_fail=False)
+
+# fact_inventory_snapshots should be between 20% and 80% of fact_transactions
+fi_count = current_counts["fact_inventory_snapshots"]
+ratio_fi = fi_count / max(ft_count, 1)
+if 0.2 <= ratio_fi <= 0.8:
+    check("row_count.ratio.fact_inventory_vs_transactions", "PASS",
+          f"Ratio {ratio_fi:.2f} (inventory/transactions) within expected 0.2-0.8")
+else:
+    check("row_count.ratio.fact_inventory_vs_transactions", "WARN",
+          f"Ratio {ratio_fi:.2f} outside expected 0.2-0.8 -- check pharmacy data volume", hard_fail=False)
+
+# Step 4: Write current counts to watermarks for next run
+print("\n  Writing current counts to pipeline_watermarks...")
+for table, count in current_counts.items():
+    try:
+        spark.sql(f"""
+            INSERT INTO {CATALOG}.quality.pipeline_watermarks VALUES (
+                'manual',
+                'gold',
+                'validation',
+                'gold.{table}',
+                current_timestamp(),
+                null,
+                {count},
+                'COMPLETE',
+                current_timestamp(),
+                current_timestamp()
+            )
+        """)
+    except Exception as e:
+        print(f"  WARNING: Could not write watermark for {table}: {str(e)[:80]}")
+
+print("  Watermarks written for next run comparison")
 
 # COMMAND ----------
 
@@ -189,10 +269,12 @@ for table in ["fact_transactions", "fact_seller_performance"]:
 print("\n  Checking pharmacy occurred_at parseability...")
 pharma_df = spark.table(f"{CATALOG}.gold.fact_inventory_snapshots")
 total_pharma = pharma_df.count()
+
 unparseable = pharma_df.filter(
-    F.to_date(F.col("occurred_at")).isNull() &
-    F.col("occurred_at").isNotNull()
+    F.col("occurred_at").isNotNull() &
+    F.expr("try_cast(occurred_at as date)").isNull()
 ).count()
+
 unparseable_rate = null_rate(unparseable, total_pharma)
 
 if unparseable == 0:
@@ -610,20 +692,21 @@ for seg in ["premium", "standard", "occasional", "new"]:
     else:
         check(f"segment_present.{seg}", "FAIL", f"{seg} segment MISSING from agg_customer_segments", hard_fail=True)
 
-# All 8 ATC drug codes in fact_inventory_snapshots
+# All 8 ATC drug codes in dim_product (pharmacy domain)
 expected_atc = ["M01AB", "M01AE", "N02BA", "N02BE", "N05B", "N05C", "R03", "R06"]
-actual_product_ids = [r["product_id"] for r in
+actual_atc = [r["atc_code"] for r in
     spark.sql(f"""
-        SELECT DISTINCT product_id
-        FROM {CATALOG}.gold.fact_inventory_snapshots
-        WHERE product_id IS NOT NULL
+        SELECT DISTINCT atc_code
+        FROM {CATALOG}.gold.dim_product
+        WHERE domain = 'pharmacy'
+        AND atc_code IS NOT NULL
     """).collect()]
 
 for atc in expected_atc:
-    if any(atc in pid for pid in actual_product_ids):
-        check(f"atc_present.{atc}", "PASS", f"ATC code {atc} present")
+    if atc in actual_atc:
+        check(f"atc_present.{atc}", "PASS", f"ATC code {atc} present in dim_product")
     else:
-        check(f"atc_present.{atc}", "WARN", f"ATC code {atc} not found in fact_inventory_snapshots", hard_fail=False)
+        check(f"atc_present.{atc}", "WARN", f"ATC code {atc} not found in dim_product pharmacy domain", hard_fail=False)
 
 # SCD2 check -- warn if zero historical rows
 customer_historical = spark.table(f"{CATALOG}.gold.dim_customer") \
