@@ -173,3 +173,8 @@ print(f"Duplicate product_key: {dup_keys}")
 
 status = "PASS" if null_product_key == 0 and dup_keys == 0 else "FAIL"
 print(f"\n{status}: dim_product verified")
+
+# COMMAND ----------
+
+# DBTITLE 1,Drop dim_customer table
+spark.sql("DROP TABLE IF EXISTS acip.gold.dim_customer")

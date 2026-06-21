@@ -47,6 +47,7 @@ if current_version is not None:
 # COMMAND ----------
 
 # DBTITLE 1,STEP 1: Parse Marketplace Events from Silver
+# DBTITLE 1,STEP 1: Parse Marketplace Events from Silver
 print("STEP 1: PARSE MARKETPLACE EVENTS FROM SILVER")
 print("=" * 70)
 
@@ -62,8 +63,6 @@ payload_schema = StructType([
     StructField("price", DoubleType(), True),
     StructField("freight_value", DoubleType(), True),
     StructField("dispatch_time_mins", DoubleType(), True),
-    # FIX: dispatch_time_days added -- was missing from original schema
-    # Generator fix now includes this field in seller.order.dispatched payload
     StructField("dispatch_time_days", DoubleType(), True),
     StructField("sla_threshold_mins", IntegerType(), True),
     StructField("is_sla_breached", BooleanType(), True),
@@ -93,8 +92,6 @@ marketplace = silver.filter(F.col("domain") == "marketplace") \
         F.col("p.price").alias("price"),
         F.col("p.freight_value").alias("freight_value"),
         F.col("p.dispatch_time_mins").alias("dispatch_time_mins"),
-        # FIX: derive dispatch_time_days from payload if present,
-        # otherwise calculate from dispatch_time_mins
         F.coalesce(
             F.col("p.dispatch_time_days"),
             F.when(
@@ -119,6 +116,32 @@ marketplace = marketplace.filter(
     )
 )
 
+# FIX: Recalculate SLA thresholds for batch events that used old minute-based values
+# Old generator used 45-180 mins; correct values are day-based (2880-20160 mins)
+# Batch events have sla_threshold_mins < 1440 (less than 1 day) -- unrealistic
+# Recalculate using seller_tier and new day-based thresholds
+marketplace = marketplace.withColumn(
+    "sla_threshold_mins",
+    F.when(
+        F.col("sla_threshold_mins").isNotNull() &
+        (F.col("sla_threshold_mins") < 2880),
+        F.when(F.col("seller_tier") == "platinum", 2  * 1440)
+         .when(F.col("seller_tier") == "gold",     3  * 1440)
+         .when(F.col("seller_tier") == "standard", 5  * 1440)
+         .when(F.col("seller_tier") == "silver",   7  * 1440)
+         .when(F.col("seller_tier") == "bronze",   10 * 1440)
+         .otherwise(14 * 1440)
+    ).otherwise(F.col("sla_threshold_mins"))
+).withColumn(
+    # Recalculate is_sla_breached using corrected threshold
+    "is_sla_breached",
+    F.when(
+        F.col("dispatch_time_mins").isNotNull() &
+        F.col("sla_threshold_mins").isNotNull(),
+        F.col("dispatch_time_mins") > F.col("sla_threshold_mins")
+    ).otherwise(F.col("is_sla_breached"))
+)
+
 total = marketplace.count()
 print(f"Marketplace events parsed: {total:,}")
 
@@ -128,16 +151,23 @@ for row in event_dist:
     pct = row["count"] / total * 100
     print(f"  {row['event_type']}: {row['count']:,} ({pct:.1f}%)")
 
-# Check null price on dispatch events before proceeding
-dispatch_total = marketplace.filter(F.col("event_type") == "seller.order.dispatched").count()
-null_price_dispatch = marketplace.filter(
-    (F.col("event_type") == "seller.order.dispatched") &
-    F.col("price").isNull()
-).count()
-print(f"\nNull price on dispatch events: {null_price_dispatch:,} of {dispatch_total:,}")
-if null_price_dispatch > 0:
-    pct = null_price_dispatch / max(dispatch_total, 1) * 100
-    print(f"  NOTE: {pct:.1f}% null price -- check marketplace_generator.py fix was applied")
+# Verify SLA threshold fix
+dispatch_df = marketplace.filter(F.col("event_type") == "seller.order.dispatched")
+dispatch_total = dispatch_df.count()
+null_price = dispatch_df.filter(F.col("price").isNull()).count()
+old_threshold = dispatch_df.filter(F.col("sla_threshold_mins") < 1440).count()
+
+print(f"\nDispatch events: {dispatch_total:,}")
+print(f"Null price on dispatch: {null_price:,} (expected 0)")
+print(f"Events with old threshold (<1440 mins): {old_threshold:,} (expected 0)")
+
+sla_stats = dispatch_df.select(
+    F.round(F.avg("sla_threshold_mins"), 0).alias("avg_sla_mins"),
+    F.round(F.avg("dispatch_time_mins"), 0).alias("avg_dispatch_mins"),
+    F.round(F.avg("dispatch_time_days"), 1).alias("avg_dispatch_days"),
+).collect()[0]
+print(f"Avg SLA threshold: {sla_stats['avg_sla_mins']} mins ({round(sla_stats['avg_sla_mins']/1440, 1)} days)")
+print(f"Avg dispatch time: {sla_stats['avg_dispatch_mins']} mins ({sla_stats['avg_dispatch_days']} days)")
 
 # COMMAND ----------
 
