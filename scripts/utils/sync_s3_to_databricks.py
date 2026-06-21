@@ -25,7 +25,7 @@ S3_PREFIX             = os.getenv("S3_PREFIX", "")
 
 # Databricks config
 DATABRICKS_HOST  = os.getenv("DATABRICKS_HOST", "").rstrip("/")
-DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN")
+DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN_DBT")
 VOLUME_PATH      = "/Volumes/acip/bronze/raw_files/s3_events"
 
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -114,26 +114,26 @@ def get_dbx_headers():
     }
 
 
-def upload_to_volume(local_path, volume_file_path):
-    """
-    Upload a local file to Databricks Volume using Files API.
-    volume_file_path: full path e.g. /Volumes/acip/bronze/raw_files/s3_events/domain=ecommerce/file.json
-    """
+def upload_to_volume(local_path, volume_file_path, max_retries=3):
     url = f"{DATABRICKS_HOST}/api/2.0/fs/files{volume_file_path}"
-
-    with open(local_path, "rb") as f:
-        response = requests.put(
-            url,
-            headers=get_dbx_headers(),
-            data=f,
-            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
-        )
-
-    if response.status_code in (200, 204):
-        return True
-    else:
-        print(f"    Upload failed: HTTP {response.status_code} -- {response.text[:200]}")
-        return False
+    for attempt in range(1, max_retries + 1):
+        try:
+            with open(local_path, "rb") as f:
+                response = requests.put(
+                    url,
+                    headers=get_dbx_headers(),
+                    data=f,
+                    timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
+                )
+            if response.status_code in (200, 204):
+                return True
+            else:
+                print(f"    Attempt {attempt} failed: HTTP {response.status_code} -- {response.text[:150]}")
+        except Exception as e:
+            print(f"    Attempt {attempt} failed: {type(e).__name__}: {str(e)[:100]}")
+        if attempt < max_retries:
+            time.sleep(5 * attempt)
+    return False
 
 
 def check_volume_file_exists(volume_file_path):
