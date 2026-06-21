@@ -82,7 +82,7 @@ def get_s3_client():
 
 
 def list_s3_files(s3_client):
-    """List all finalised JSON files in S3 bucket."""
+    """List all JSON and _tmp_ files in S3 bucket per domain."""
     files = []
     paginator = s3_client.get_paginator("list_objects_v2")
     pages = paginator.paginate(Bucket=S3_BUCKET, Prefix=S3_PREFIX)
@@ -91,12 +91,15 @@ def list_s3_files(s3_client):
         for obj in page.get("Contents", []):
             key = obj["Key"]
             name = key.split("/")[-1]
-            # Skip temp files, hidden files, directories
-            if name.startswith("_") or name.startswith("."):
+            # Skip hidden files and directory markers
+            if name.startswith(".") or obj["Key"].endswith("/"):
                 continue
-            if not name.endswith(".json"):
+            # Skip zero-byte files
+            if obj["Size"] == 0:
                 continue
-            if obj["Key"].endswith("/"):
+            # Include both finalised .json and Flink _tmp_ files
+            # _tmp_ files contain complete data -- Flink just never renamed them
+            if not (name.endswith(".json") or "_tmp_" in name):
                 continue
             files.append({
                 "key": key,
