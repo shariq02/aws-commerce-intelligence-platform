@@ -10,6 +10,22 @@ TOPIC = "ecommerce.events"
 CUSTOMER_SEGMENT_BINS = [0, 0.2, 0.5, 1.0]
 CUSTOMER_SEGMENT_LABELS = ["premium", "standard", "new"]
 
+REGION_MAP = {
+    "SP": "southeast", "RJ": "southeast", "MG": "southeast", "ES": "southeast",
+    "RS": "south",     "PR": "south",     "SC": "south",
+    "BA": "northeast", "PE": "northeast", "CE": "northeast", "MA": "northeast",
+    "PA": "northeast", "PB": "northeast", "RN": "northeast", "AL": "northeast",
+    "SE": "northeast", "PI": "northeast",
+    "DF": "center_west", "GO": "center_west", "MT": "center_west", "MS": "center_west",
+    "AM": "north", "PA": "north", "RO": "north", "AC": "north",
+    "RR": "north", "AP": "north", "TO": "north",
+}
+
+# Fix applied June 2026:
+# order_status was missing from payload -- Gold notebook 13 was reading null
+# Added order_status, state_region, customer_state, fulfilment fields to order.placed
+# These fields are present in Olist dataset and needed for Gold layer joins
+
 
 class EcommerceGenerator(BaseGenerator):
 
@@ -43,7 +59,10 @@ class EcommerceGenerator(BaseGenerator):
 
     def _enrich_data(self):
         self.orders_df = self.orders_df.merge(
-            self.customers_df[["customer_id", "customer_city", "customer_state"]],
+            self.customers_df[[
+                "customer_id", "customer_unique_id",
+                "customer_city", "customer_state"
+            ]],
             on="customer_id",
             how="left",
         )
@@ -58,9 +77,18 @@ class EcommerceGenerator(BaseGenerator):
             .first()
             .reset_index()
         )
+        max_installments = (
+            self.payments_df.groupby("order_id")["payment_installments"]
+            .max()
+            .reset_index()
+            .rename(columns={"payment_installments": "max_installments"})
+        )
         self.orders_df = self.orders_df.merge(payment_totals, on="order_id", how="left")
         self.orders_df = self.orders_df.merge(payment_methods, on="order_id", how="left")
+        self.orders_df = self.orders_df.merge(max_installments, on="order_id", how="left")
         self.orders_df["total_amount"] = self.orders_df["total_amount"].fillna(0.0)
+        self.orders_df["max_installments"] = self.orders_df["max_installments"].fillna(1).astype(int)
+
         quantiles = self.orders_df["total_amount"].quantile(
             CUSTOMER_SEGMENT_BINS
         ).values
@@ -70,6 +98,7 @@ class EcommerceGenerator(BaseGenerator):
             labels=CUSTOMER_SEGMENT_LABELS,
             include_lowest=True,
         ).astype(str)
+
         self.products_df = self.products_df.merge(
             self.translations_df,
             on="product_category_name",
@@ -78,6 +107,15 @@ class EcommerceGenerator(BaseGenerator):
         self.products_df["product_category_name_english"] = (
             self.products_df["product_category_name_english"].fillna("other")
         )
+
+        # Merge review scores for fulfilment enrichment
+        review_scores = (
+            self.reviews_df.groupby("order_id")["review_score"]
+            .mean()
+            .reset_index()
+            .rename(columns={"review_score": "avg_review_score"})
+        )
+        self.orders_df = self.orders_df.merge(review_scores, on="order_id", how="left")
 
     def _build_items(self, order_id):
         items = self.items_df[self.items_df["order_id"] == order_id]
@@ -101,15 +139,80 @@ class EcommerceGenerator(BaseGenerator):
             })
         return result
 
+    def _get_fulfilment_info(self, order):
+        """Calculate fulfilment time and bucket from order timestamps."""
+        try:
+            purchase_time = pd.to_datetime(order["order_purchase_timestamp"])
+            delivery_time = pd.to_datetime(order.get("order_delivered_customer_date"))
+            if pd.isna(delivery_time):
+                return None, None, None, None
+            fulfilment_mins = int((delivery_time - purchase_time).total_seconds() / 60)
+            fulfilment_days = round(fulfilment_mins / 1440.0, 2)
+            if fulfilment_days <= 1:
+                bucket = "express"
+            elif fulfilment_days <= 5:
+                bucket = "standard"
+            elif fulfilment_days <= 14:
+                bucket = "slow"
+            else:
+                bucket = "very_slow"
+            estimated = pd.to_datetime(order.get("order_estimated_delivery_date"))
+            delivery_on_time = (
+                delivery_time <= estimated
+                if not pd.isna(estimated)
+                else None
+            )
+            return fulfilment_mins, fulfilment_days, bucket, delivery_on_time
+        except Exception:
+            return None, None, None, None
+
     def _publish_order_placed(self, order, items):
+        state = str(order.get("customer_state", "SP"))
+        state_region = REGION_MAP.get(state, "other")
+        fulfilment_mins, fulfilment_days, fulfilment_bucket, delivery_on_time = \
+            self._get_fulfilment_info(order)
+
+        avg_review = order.get("avg_review_score")
+        avg_review = float(avg_review) if not pd.isna(avg_review) else None
+
+        review_sentiment = None
+        has_negative_review = False
+        if avg_review is not None:
+            if avg_review >= 4:
+                review_sentiment = "positive"
+            elif avg_review >= 3:
+                review_sentiment = "neutral"
+            else:
+                review_sentiment = "negative"
+                has_negative_review = True
+
+        # FIX: added order_status, state_region, customer_state, customer_unique_id,
+        # fulfilment fields, review fields, is_installment, max_installments
+        # Previously missing from payload causing null order_status in Gold layer
         payload = {
             "order_id": str(order["order_id"]),
             "customer_id": str(order["customer_id"]),
+            "customer_unique_id": str(order.get("customer_unique_id", "")),
             "customer_segment": str(order["customer_segment"]),
-            "region": f"{order['customer_city']}-{order['customer_state']}",
+            "region": f"{order['customer_city']}-{state}",
+            "state_region": state_region,
+            "customer_state": state,
             "items": items,
             "total_amount": float(order["total_amount"]),
             "payment_method": str(order.get("payment_type", "unknown")),
+            "is_installment": bool(order.get("max_installments", 1) > 1),
+            "max_installments": int(order.get("max_installments", 1)),
+            "order_status": str(order.get("order_status", "unknown")),
+            "item_count": len(items),
+            "is_multi_item": len(items) > 1,
+            "is_multi_seller": len(set(i.get("seller_id", "") for i in items)) > 1,
+            "fulfilment_time_mins": fulfilment_mins,
+            "fulfilment_time_days": fulfilment_days,
+            "fulfilment_bucket": fulfilment_bucket,
+            "delivery_on_time": delivery_on_time,
+            "avg_review_score": avg_review,
+            "review_sentiment": review_sentiment,
+            "has_negative_review": has_negative_review,
             "channel": "web",
         }
         event = self.build_envelope(

@@ -3,7 +3,6 @@ import logging
 import random
 import hashlib
 import pandas as pd
-from datetime import datetime, timezone, timedelta
 from base_generator import BaseGenerator
 
 logger = logging.getLogger(__name__)
@@ -11,18 +10,18 @@ logger = logging.getLogger(__name__)
 TOPIC = "pharmacy.events"
 
 ATC_CATEGORIES = {
-    "M01AB": {"name": "Anti-inflammatory", "is_prescription": True},
-    "M01AE": {"name": "Anti-inflammatory-OTC", "is_prescription": False},
-    "N02BA": {"name": "Analgesic", "is_prescription": False},
-    "N02BE": {"name": "Analgesic-OTC", "is_prescription": False},
-    "N05B": {"name": "Anxiolytic", "is_prescription": True},
-    "N05C": {"name": "Hypnotic", "is_prescription": True},
-    "R03": {"name": "Respiratory", "is_prescription": True},
-    "R06": {"name": "Antihistamine", "is_prescription": False},
+    "M01AB": {"name": "anti_inflammatory_acetic_acid",   "category_group": "anti_inflammatory", "is_prescription": True,  "drug_class": "NSAID"},
+    "M01AE": {"name": "anti_inflammatory_propionic_acid","category_group": "anti_inflammatory", "is_prescription": False, "drug_class": "NSAID"},
+    "N02BA": {"name": "analgesic_salicylic_acid",         "category_group": "analgesic",         "is_prescription": False, "drug_class": "salicylate"},
+    "N02BE": {"name": "analgesic_anilide",                "category_group": "analgesic",         "is_prescription": False, "drug_class": "anilide"},
+    "N05B":  {"name": "anxiolytic",                       "category_group": "psychoactive",      "is_prescription": True,  "drug_class": "benzodiazepine"},
+    "N05C":  {"name": "hypnotic_sedative",                "category_group": "psychoactive",      "is_prescription": True,  "drug_class": "sedative"},
+    "R03":   {"name": "respiratory_obstructive",          "category_group": "respiratory",       "is_prescription": True,  "drug_class": "bronchodilator"},
+    "R06":   {"name": "antihistamine",                    "category_group": "respiratory",       "is_prescription": False, "drug_class": "antihistamine"},
 }
 
 FILL_TIME_PARAMS = {
-    True: {"mean": 25, "std": 8},
+    True:  {"mean": 25, "std": 8},
     False: {"mean": 10, "std": 3},
 }
 
@@ -32,6 +31,15 @@ REGIONS = [
 ]
 
 INITIAL_STOCK = 500
+REORDER_THRESHOLD = int(INITIAL_STOCK * 0.1)
+
+# Fix applied June 2026:
+# prescription.filled and inventory.updated payloads were minimal --
+# missing product_id, category, atc_code, drug_class, quantity,
+# is_prescription, stock_level, reorder_threshold fields.
+# Gold notebook 14 was reading these from payload and getting nulls
+# for streaming events, causing 3,515 null stock_level rows.
+# All fields now included in every event type payload.
 
 
 class PharmacyGenerator(BaseGenerator):
@@ -66,18 +74,68 @@ class PharmacyGenerator(BaseGenerator):
         params = FILL_TIME_PARAMS[is_prescription]
         return max(5, int(random.gauss(params["mean"], params["std"])))
 
-    def _publish_prescription_submitted(self, row, drug_code, quantity, correlation_id):
-        category_info = ATC_CATEGORIES[drug_code]
-        payload = {
-            "prescription_id": correlation_id,
+    def _build_full_payload(self, drug_code, quantity, stock_level, fill_time_mins, row):
+        """Build complete payload with all fields needed by Gold notebook 14."""
+        info = ATC_CATEGORIES[drug_code]
+        reorder_threshold = REORDER_THRESHOLD
+        days_of_supply = max(0, round(stock_level / max(quantity, 1), 1))
+
+        if stock_level <= reorder_threshold * 0.5:
+            stock_alert_level = "critical"
+        elif stock_level <= reorder_threshold:
+            stock_alert_level = "high"
+        elif stock_level <= reorder_threshold * 2:
+            stock_alert_level = "medium"
+        else:
+            stock_alert_level = "normal"
+
+        hour = getattr(row, "Hour", 0) if hasattr(row, "Hour") else 0
+        if isinstance(hour, float):
+            hour = int(hour)
+
+        if 6 <= hour <= 11:
+            time_of_day = "morning"
+        elif 12 <= hour <= 17:
+            time_of_day = "afternoon"
+        elif 18 <= hour <= 22:
+            time_of_day = "evening"
+        else:
+            time_of_day = "night"
+
+        is_peak_hour = (10 <= hour <= 12) or (16 <= hour <= 19)
+        weekday = getattr(row, "weekday_name", "Monday") if hasattr(row, "weekday_name") else "Monday"
+        is_weekend = str(weekday) in ("Saturday", "Sunday")
+
+        return {
             "product_id": self._get_product_id(drug_code),
-            "product_name": category_info["name"],
-            "category": drug_code,
-            "is_prescription": category_info["is_prescription"],
-            "quantity": quantity,
-            "unit_price": round(random.uniform(5.0, 45.0), 2),
-            "region": self._get_region(row.name),
+            "category": info["name"],
+            "category_group": info["category_group"],
+            "atc_code": drug_code,
+            "drug_class": info["drug_class"],
+            "quantity": float(quantity),
+            "is_prescription": info["is_prescription"],
+            "stock_level": stock_level,
+            "reorder_threshold": reorder_threshold,
+            "days_of_supply": days_of_supply,
+            "stock_alert_level": stock_alert_level,
+            "fill_time_mins": fill_time_mins,
+            "time_of_day": time_of_day,
+            "is_peak_hour": is_peak_hour,
+            "is_weekend": is_weekend,
+            "hour": hour,
+            "weekday": str(weekday),
         }
+
+    def _publish_prescription_submitted(self, row, drug_code, quantity, correlation_id):
+        fill_time = self._get_fill_time(ATC_CATEGORIES[drug_code]["is_prescription"])
+        # Fix: include full payload so Gold notebook 14 has all fields
+        payload = self._build_full_payload(
+            drug_code, quantity, self.stock_levels[drug_code], fill_time, row
+        )
+        payload["prescription_id"] = correlation_id
+        payload["region"] = self._get_region(row.name)
+        payload["unit_price"] = round(random.uniform(5.0, 45.0), 2)
+
         event = self.build_envelope(
             event_type="prescription.submitted",
             payload=payload,
@@ -85,18 +143,19 @@ class PharmacyGenerator(BaseGenerator):
         )
         self.publish(TOPIC, event, key=self._get_product_id(drug_code))
 
-    def _publish_prescription_filled(self, row, drug_code, correlation_id):
-        category_info = ATC_CATEGORIES[drug_code]
-        fill_time = self._get_fill_time(category_info["is_prescription"])
+    def _publish_prescription_filled(self, row, drug_code, quantity, correlation_id):
+        # Fix: previously minimal payload missing all critical fields
+        # Now includes complete payload identical to prescription.submitted
         self.stock_levels[drug_code] = max(
             0, self.stock_levels[drug_code] - 1
         )
-        payload = {
-            "prescription_id": correlation_id,
-            "fill_time_mins": fill_time,
-            "stock_level_post": self.stock_levels[drug_code],
-            "is_substituted": False,
-        }
+        fill_time = self._get_fill_time(ATC_CATEGORIES[drug_code]["is_prescription"])
+        payload = self._build_full_payload(
+            drug_code, quantity, self.stock_levels[drug_code], fill_time, row
+        )
+        payload["prescription_id"] = correlation_id
+        payload["is_substituted"] = False
+
         event = self.build_envelope(
             event_type="prescription.filled",
             payload=payload,
@@ -104,18 +163,15 @@ class PharmacyGenerator(BaseGenerator):
         )
         self.publish(TOPIC, event, key=self._get_product_id(drug_code))
 
-    def _publish_inventory_update(self, drug_code):
+    def _publish_inventory_update(self, drug_code, row):
+        # Fix: previously minimal payload missing critical fields
         stock = self.stock_levels[drug_code]
-        reorder_threshold = int(INITIAL_STOCK * 0.1)
-        days_of_supply = max(0, int(stock / 10))
-        payload = {
-            "product_id": self._get_product_id(drug_code),
-            "warehouse_id": "WH-Hamburg-01",
-            "stock_level": stock,
-            "reorder_threshold": reorder_threshold,
-            "days_of_supply": days_of_supply,
-            "update_reason": "sale",
-        }
+        payload = self._build_full_payload(
+            drug_code, 1, stock, 0, row
+        )
+        payload["warehouse_id"] = "WH-Hamburg-01"
+        payload["update_reason"] = "sale"
+
         event = self.build_envelope(
             event_type="inventory.updated",
             payload=payload,
@@ -149,10 +205,12 @@ class PharmacyGenerator(BaseGenerator):
                 self._publish_prescription_submitted(
                     row, drug_code, quantity, correlation_id
                 )
-                self._publish_prescription_filled(row, drug_code, correlation_id)
+                self._publish_prescription_filled(
+                    row, drug_code, quantity, correlation_id
+                )
                 counter += 1
                 if counter % self.inventory_publish_interval == 0:
-                    self._publish_inventory_update(drug_code)
+                    self._publish_inventory_update(drug_code, row)
                 time.sleep(delay)
 
             if (idx + 1) % self.CHECKPOINT_INTERVAL == 0:
