@@ -3,7 +3,13 @@ ACIP S3 TO DATABRICKS VOLUME SYNC
 Downloads JSON events from S3 Bronze bucket to local data/s3_bronze/
 then uploads to Databricks Volume /Volumes/acip/bronze/raw_files/s3_events/
 Replaces the manual two-step: aws s3 sync + Databricks UI upload
-Uses local machine as free intermediate -- no direct S3-to-Databricks transfer
+
+Fixes applied June 2026:
+  1. Flattens file structure on upload -- uploads as {domain}_events.json
+     at volume root so Spark can read without _tmp_ confusion
+  2. Cleans old volume files before uploading new ones
+  3. Uses DATABRICKS_TOKEN_DBT for auth
+  4. Retry logic on upload with backoff
 """
 
 import os
@@ -16,14 +22,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# AWS config
 AWS_ACCESS_KEY_ID     = os.getenv("AWS_ACCESS_KEY_ID")
 AWS_SECRET_ACCESS_KEY = os.getenv("AWS_SECRET_ACCESS_KEY")
 AWS_REGION            = os.getenv("AWS_REGION", "eu-central-1")
 S3_BUCKET             = os.getenv("S3_BUCKET", "acip-dev-bronze")
 S3_PREFIX             = os.getenv("S3_PREFIX", "")
 
-# Databricks config
 DATABRICKS_HOST  = os.getenv("DATABRICKS_HOST", "").rstrip("/")
 DATABRICKS_TOKEN = os.getenv("DATABRICKS_TOKEN_DBT")
 VOLUME_PATH      = "/Volumes/acip/bronze/raw_files/s3_events"
@@ -36,7 +40,9 @@ CHECKPOINT_FILE = LOCAL_DIR / ".sync_checkpoint.json"
 
 CONNECT_TIMEOUT = 30
 READ_TIMEOUT    = 120
-CHUNK_SIZE      = 4 * 1024 * 1024
+MAX_RETRIES     = 3
+
+DOMAINS = ["ecommerce", "pharmacy", "marketplace"]
 
 print("=" * 70)
 print("ACIP S3 TO DATABRICKS VOLUME SYNC")
@@ -76,17 +82,24 @@ def get_s3_client():
 
 
 def list_s3_files(s3_client):
-    """List all files in S3 bucket with their sizes and ETags."""
+    """List all finalised JSON files in S3 bucket."""
     files = []
     paginator = s3_client.get_paginator("list_objects_v2")
     pages = paginator.paginate(Bucket=S3_BUCKET, Prefix=S3_PREFIX)
 
     for page in pages:
         for obj in page.get("Contents", []):
+            key = obj["Key"]
+            name = key.split("/")[-1]
+            # Skip temp files, hidden files, directories
+            if name.startswith("_") or name.startswith("."):
+                continue
+            if not name.endswith(".json"):
+                continue
             if obj["Key"].endswith("/"):
                 continue
             files.append({
-                "key": obj["Key"],
+                "key": key,
                 "size": obj["Size"],
                 "etag": obj["ETag"].strip('"'),
                 "last_modified": obj["LastModified"].isoformat(),
@@ -95,13 +108,43 @@ def list_s3_files(s3_client):
     return files
 
 
-def download_from_s3(s3_client, s3_key, local_path):
-    """Download a file from S3 to local path."""
+def group_by_domain(s3_files):
+    """
+    Group S3 files by domain and merge into one per domain.
+    S3 structure: domain=ecommerce/YYYY-MM-DD--HH/events-*.json
+    Upload as: ecommerce_events.json (one file per domain)
+    """
+    domain_files = {d: [] for d in DOMAINS}
+    for f in s3_files:
+        for domain in DOMAINS:
+            if f"domain={domain}/" in f["key"]:
+                domain_files[domain].append(f)
+                break
+    return domain_files
+
+
+def download_and_merge_domain(s3_client, domain, files, local_path):
+    """
+    Download all S3 files for a domain and merge into one local JSON file.
+    Each line is a JSON event -- merge by concatenating all lines.
+    """
     local_path = Path(local_path)
     local_path.parent.mkdir(parents=True, exist_ok=True)
 
-    s3_client.download_file(S3_BUCKET, s3_key, str(local_path))
-    return local_path.stat().st_size
+    total_lines = 0
+    with open(local_path, "w", encoding="utf-8") as out_f:
+        for f in files:
+            tmp_path = LOCAL_DIR / f"_tmp_{domain}_{f['etag'][:8]}.json"
+            s3_client.download_file(S3_BUCKET, f["key"], str(tmp_path))
+            with open(tmp_path, "r", encoding="utf-8") as in_f:
+                for line in in_f:
+                    line = line.strip()
+                    if line:
+                        out_f.write(line + "\n")
+                        total_lines += 1
+            tmp_path.unlink()
+
+    return total_lines
 
 
 # ---------------------------------------------------------------------------
@@ -109,14 +152,65 @@ def download_from_s3(s3_client, s3_key, local_path):
 # ---------------------------------------------------------------------------
 
 def get_dbx_headers():
-    return {
-        "Authorization": f"Bearer {DATABRICKS_TOKEN}",
-    }
+    return {"Authorization": f"Bearer {DATABRICKS_TOKEN}"}
 
 
-def upload_to_volume(local_path, volume_file_path, max_retries=3):
+def list_volume_files():
+    """List all files currently in the Databricks Volume."""
+    url = f"{DATABRICKS_HOST}/api/2.0/fs/directories{VOLUME_PATH}"
+    try:
+        response = requests.get(
+            url,
+            headers=get_dbx_headers(),
+            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT)
+        )
+        if response.status_code == 200:
+            return response.json().get("contents", [])
+    except Exception:
+        pass
+    return []
+
+
+def delete_volume_file(file_path):
+    """Delete a file from Databricks Volume."""
+    url = f"{DATABRICKS_HOST}/api/2.0/fs/files{file_path}"
+    try:
+        response = requests.delete(
+            url,
+            headers=get_dbx_headers(),
+            timeout=(CONNECT_TIMEOUT, READ_TIMEOUT)
+        )
+        return response.status_code in (200, 204)
+    except Exception:
+        return False
+
+
+def clean_volume():
+    """Delete all existing files from the volume before uploading new ones."""
+    print("\nCleaning old volume files...")
+    files = list_volume_files()
+    deleted = 0
+    for f in files:
+        path = f.get("path", "")
+        name = f.get("name", "")
+        if not path:
+            continue
+        # Only delete json files and domain= directories
+        if name.endswith(".json") or name.startswith("domain="):
+            success = delete_volume_file(path)
+            if success:
+                print(f"  Deleted: {name}")
+                deleted += 1
+            else:
+                print(f"  Failed to delete: {name}")
+    print(f"Cleaned {deleted} files from volume")
+
+
+def upload_to_volume(local_path, volume_file_path):
+    """Upload a local file to Databricks Volume with retry."""
     url = f"{DATABRICKS_HOST}/api/2.0/fs/files{volume_file_path}"
-    for attempt in range(1, max_retries + 1):
+
+    for attempt in range(1, MAX_RETRIES + 1):
         try:
             with open(local_path, "rb") as f:
                 response = requests.put(
@@ -131,128 +225,104 @@ def upload_to_volume(local_path, volume_file_path, max_retries=3):
                 print(f"    Attempt {attempt} failed: HTTP {response.status_code} -- {response.text[:150]}")
         except Exception as e:
             print(f"    Attempt {attempt} failed: {type(e).__name__}: {str(e)[:100]}")
-        if attempt < max_retries:
-            time.sleep(5 * attempt)
+
+        if attempt < MAX_RETRIES:
+            wait = 5 * attempt
+            print(f"    Retrying in {wait}s...")
+            time.sleep(wait)
+
     return False
 
 
-def check_volume_file_exists(volume_file_path):
-    """Check if a file already exists in Databricks Volume."""
-    url = f"{DATABRICKS_HOST}/api/2.0/fs/files{volume_file_path}"
-    response = requests.get(
-        url,
-        headers=get_dbx_headers(),
-        timeout=(CONNECT_TIMEOUT, READ_TIMEOUT),
-    )
-    return response.status_code == 200
-
-
 # ---------------------------------------------------------------------------
-# Main sync logic
+# Main
 # ---------------------------------------------------------------------------
 
 def main():
     if not AWS_ACCESS_KEY_ID or not AWS_SECRET_ACCESS_KEY:
-        print("\nERROR: AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY not found in .env")
+        print("\nERROR: AWS credentials not found in .env")
         return
 
     if not DATABRICKS_HOST or not DATABRICKS_TOKEN:
-        print("\nERROR: DATABRICKS_HOST and DATABRICKS_TOKEN not found in .env")
+        print("\nERROR: DATABRICKS_HOST or DATABRICKS_TOKEN_DBT not found in .env")
         return
-
-    checkpoint = load_checkpoint()
-    print(f"\nPreviously synced: {len(checkpoint)} files")
 
     # Step 1: List S3 files
     print("\nStep 1: Listing S3 files...")
     s3_client = get_s3_client()
     s3_files = list_s3_files(s3_client)
-    print(f"Found {len(s3_files)} files in s3://{S3_BUCKET}/{S3_PREFIX}")
+    print(f"Found {len(s3_files)} finalised JSON files in s3://{S3_BUCKET}/")
 
     if not s3_files:
-        print("No files found in S3. Run the generators and Flink bronze_writer first.")
+        print("No finalised files found.")
+        print("NOTE: Run generators + bronze_writer and wait 30s after generators")
+        print("      finish before cancelling bronze_writer (allows checkpoint to complete)")
         return
 
-    # Step 2: Identify files to sync
-    print("\nStep 2: Identifying files to sync...")
-    to_sync = []
     for f in s3_files:
-        key = f["key"]
-        if key not in checkpoint:
-            to_sync.append(f)
-        elif checkpoint[key].get("etag") != f["etag"]:
-            print(f"  Changed: {key}")
-            to_sync.append(f)
-        else:
-            pass  # up to date
+        print(f"  {f['key']} ({f['size']/(1024*1024):.2f} MB)")
 
-    print(f"Files to sync: {len(to_sync)} / {len(s3_files)}")
+    # Step 2: Group by domain
+    domain_files = group_by_domain(s3_files)
+    print("\nFiles per domain:")
+    for domain, files in domain_files.items():
+        print(f"  {domain}: {len(files)} files")
 
-    if not to_sync:
-        print("\nAll files already synced -- nothing to do")
+    domains_with_files = {d: f for d, f in domain_files.items() if f}
+    if not domains_with_files:
+        print("No domain files found -- check S3 folder structure")
         return
 
-    # Step 3: Download from S3 and upload to Databricks
-    print("\nStep 3: Downloading from S3 and uploading to Databricks Volume...")
+    # Step 3: Clean old volume files
+    clean_volume()
 
-    results = {"success": 0, "failed": 0, "skipped": 0}
-    total = len(to_sync)
+    # Step 4: Download, merge per domain, upload
+    print("\nStep 4: Download from S3, merge, upload to Databricks Volume...")
+    results = {}
 
-    for i, f in enumerate(to_sync, 1):
-        key = f["key"]
-        size_mb = f["size"] / (1024 * 1024)
+    for domain, files in domains_with_files.items():
+        print(f"\n  {domain.upper()} ({len(files)} files):")
 
-        # Build local path preserving S3 folder structure
-        relative_key = key[len(S3_PREFIX):].lstrip("/")
-        local_path = LOCAL_DIR / relative_key
-        volume_file_path = f"{VOLUME_PATH}/{relative_key}"
-
-        print(f"\n[{i}/{total}] {key}")
-        print(f"  Size:   {size_mb:.2f} MB")
-        print(f"  Local:  {local_path}")
-        print(f"  Volume: {volume_file_path}")
-
+        # Merge all domain files into one local file
+        local_path = LOCAL_DIR / f"{domain}_events.json"
+        print(f"    Downloading and merging {len(files)} files...", end=" ", flush=True)
         try:
-            # Download from S3
-            print(f"  Downloading from S3...", end=" ", flush=True)
-            downloaded_size = download_from_s3(s3_client, key, local_path)
-            print(f"OK ({downloaded_size / (1024*1024):.2f} MB)")
-
-            # Upload to Databricks Volume
-            print(f"  Uploading to Volume...", end=" ", flush=True)
-            success = upload_to_volume(local_path, volume_file_path)
-
-            if success:
-                print(f"OK")
-                checkpoint[key] = {
-                    "etag": f["etag"],
-                    "size": f["size"],
-                    "last_modified": f["last_modified"],
-                    "local_path": str(local_path),
-                    "volume_path": volume_file_path,
-                }
-                save_checkpoint(checkpoint)
-                results["success"] += 1
-            else:
-                results["failed"] += 1
-
+            total_lines = download_and_merge_domain(s3_client, domain, files, local_path)
+            size_mb = local_path.stat().st_size / (1024 * 1024)
+            print(f"OK ({total_lines:,} events, {size_mb:.2f} MB)")
         except Exception as e:
-            print(f"\n  ERROR: {str(e)[:150]}")
-            results["failed"] += 1
+            print(f"FAILED: {str(e)[:100]}")
+            results[domain] = False
+            continue
+
+        # Upload merged file to volume as flat {domain}_events.json
+        volume_file_path = f"{VOLUME_PATH}/{domain}_events.json"
+        print(f"    Uploading to volume...", end=" ", flush=True)
+        success = upload_to_volume(local_path, volume_file_path)
+
+        if success:
+            print(f"OK")
+            results[domain] = True
+        else:
+            print(f"FAILED")
+            results[domain] = False
 
     # Summary
     print("\n" + "=" * 70)
     print("SYNC SUMMARY")
     print("=" * 70)
-    print(f"Success: {results['success']}")
-    print(f"Failed:  {results['failed']}")
-    print(f"Total:   {total}")
+    successful = [d for d, ok in results.items() if ok]
+    failed = [d for d, ok in results.items() if not ok]
+
+    print(f"Successful: {len(successful)} -- {successful}")
+    if failed:
+        print(f"Failed:     {len(failed)} -- {failed}")
 
     print("\n" + "=" * 70)
-    if results["failed"] == 0:
+    if not failed:
         print("NEXT STEP: Run notebook 07_load_s3_events_silver.py in Databricks")
     else:
-        print("Re-run this script to retry failed files")
+        print("Re-run this script to retry failed domains")
     print("=" * 70)
 
 
