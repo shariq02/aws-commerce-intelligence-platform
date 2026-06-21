@@ -1,12 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - FACT TRANSACTIONS
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Build ecommerce fact table joining to dim_customer, dim_date, dim_geography
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Build ecommerce fact table joining to dim_customer, dim_date, dim_geography  
 # MAGIC **Input:** acip.silver.events (ecommerce), acip.gold.dim_customer,
-# MAGIC            acip.gold.dim_date, acip.gold.dim_geography
+# MAGIC            acip.gold.dim_date, acip.gold.dim_geography  
 # MAGIC **Output:** acip.gold.fact_transactions
 # MAGIC
 # MAGIC **Fixes applied (June 2026):**

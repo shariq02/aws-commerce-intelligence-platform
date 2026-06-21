@@ -1,11 +1,11 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - FACT INVENTORY SNAPSHOTS
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Build pharmacy inventory fact table joining to dim_product and dim_date
-# MAGIC **Input:** acip.silver.events (pharmacy), acip.gold.dim_product, acip.gold.dim_date
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Build pharmacy inventory fact table joining to dim_product and dim_date  
+# MAGIC **Input:** acip.silver.events (pharmacy), acip.gold.dim_product, acip.gold.dim_date  
 # MAGIC **Output:** acip.gold.fact_inventory_snapshots
 # MAGIC
 # MAGIC **Fixes applied (June 2026):**

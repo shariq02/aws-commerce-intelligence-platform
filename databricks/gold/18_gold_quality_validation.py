@@ -75,7 +75,6 @@ def null_rate(count, total):
 # COMMAND ----------
 
 # DBTITLE 1,SECTION 1: ROW COUNT ASSERTIONS
-# DBTITLE 1,SECTION 1: ROW COUNT ASSERTIONS
 print("\nSECTION 1: ROW COUNT ASSERTIONS")
 print("=" * 70)
 

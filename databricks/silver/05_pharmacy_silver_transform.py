@@ -1,12 +1,12 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## SILVER - PHARMACY TRANSFORMATION
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Transform Bronze pharmacy tables to universal silver.events schema
-# MAGIC **Input:** acip.bronze.pharma_sales_hourly
-# MAGIC **Output:** acip.silver.events (mode=APPEND - adds pharmacy rows)
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Transform Bronze pharmacy tables to universal silver.events schema  
+# MAGIC **Input:** acip.bronze.pharma_sales_hourly  
+# MAGIC **Output:** acip.silver.events (mode=APPEND - adds pharmacy rows)  
 # MAGIC **Rollback:** If this fails, rerun notebook 04 first (overwrite), then rerun this
 # MAGIC
 # MAGIC **Fix applied (June 2026):**
@@ -102,11 +102,13 @@ hourly_clean = hourly \
         F.col("hour").between(10, 12) | F.col("hour").between(16, 19)
     ) \
     .withColumn(
-        # FIX: Convert datum from M/D/YYYY to ISO date, then build ISO 8601 timestamp
-        # Original: F.concat_ws("T", F.col("datum"), F.lpad(...)) -> "1/5/2014T08"
-        # Fixed:    to_date with explicit format then date_format -> "2014-01-05T08:00:00"
+        # datum column has format "M/D/YYYY H:MM" e.g. "1/2/2014 8:00"
+        # Strip the time part first, then parse the date portion only
         "datum_iso",
-        F.to_date(F.col("datum"), "M/d/yyyy")
+        F.to_date(
+            F.trim(F.regexp_replace(F.col("datum"), r"\s+\d+:\d+$", "")),
+            "M/d/yyyy"
+        )
     )
 
 # Verify datum_iso parsed correctly

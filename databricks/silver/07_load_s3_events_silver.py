@@ -60,9 +60,29 @@ except Exception as e:
 print("STEP 2: LOAD JSON FILES FROM VOLUME")
 print("=" * 70)
 
+# Filter out Flink temp files (_tmp_ suffix and underscore prefix)
+import re
+all_files = []
+def list_recursive(path):
+    for f in dbutils.fs.ls(path):
+        if f.isDir() if hasattr(f, 'isDir') else f.size == 0:
+            list_recursive(f.path)
+        else:
+            name = f.name
+            if not name.startswith("_") and not "_tmp_" in name and name.endswith(".json"):
+                all_files.append(f.path)
+
+list_recursive(S3_EVENTS_VOLUME)
+print(f"Clean JSON files found: {len(all_files)}")
+for p in all_files:
+    print(f"  {p}")
+
+if not all_files:
+    raise Exception("No clean JSON files found -- check S3 Bronze upload")
+
 raw_df = spark.read \
     .option("multiline", "false") \
-    .json(S3_EVENTS_VOLUME)
+    .json(all_files)
 
 total_raw = raw_df.count()
 print(f"Total raw records loaded: {total_raw:,}")
