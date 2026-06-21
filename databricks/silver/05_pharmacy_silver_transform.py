@@ -1,13 +1,17 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## SILVER - PHARMACY TRANSFORMATION
-# MAGIC **AWS Commerce Intelligence Platform**  
-# MAGIC **Author:** Sharique Mohammad  
-# MAGIC **Date:** June 2026  
-# MAGIC **Purpose:** Transform Bronze pharmacy tables to universal silver.events schema  
-# MAGIC **Input:** acip.bronze.pharma_sales_hourly  
-# MAGIC **Output:** acip.silver.events (mode=APPEND - adds pharmacy rows)  
+# MAGIC **AWS Commerce Intelligence Platform**
+# MAGIC **Author:** Sharique Mohammad
+# MAGIC **Date:** June 2026
+# MAGIC **Purpose:** Transform Bronze pharmacy tables to universal silver.events schema
+# MAGIC **Input:** acip.bronze.pharma_sales_hourly
+# MAGIC **Output:** acip.silver.events (mode=APPEND - adds pharmacy rows)
 # MAGIC **Rollback:** If this fails, rerun notebook 04 first (overwrite), then rerun this
+# MAGIC
+# MAGIC **Fix applied (June 2026):**
+# MAGIC   occurred_at was built as M/D/YYYY THH (e.g. 1/5/2014T08) which is not
+# MAGIC   parseable by TRY_CAST AS DATE. Fixed to ISO 8601 format: YYYY-MM-DDTHH:00:00
 
 # COMMAND ----------
 
@@ -56,14 +60,14 @@ print("=" * 70)
 DRUG_COLS = ["M01AB", "M01AE", "N02BA", "N02BE", "N05B", "N05C", "R03", "R06"]
 
 DRUG_MAP = {
-    "M01AB": {"category": "anti_inflammatory_acetic_acid",  "category_group": "anti_inflammatory", "is_prescription": True,  "atc_code": "M01AB", "drug_class": "NSAID"},
-    "M01AE": {"category": "anti_inflammatory_propionic_acid","category_group": "anti_inflammatory", "is_prescription": False, "atc_code": "M01AE", "drug_class": "NSAID"},
-    "N02BA": {"category": "analgesic_salicylic_acid",        "category_group": "analgesic",         "is_prescription": False, "atc_code": "N02BA", "drug_class": "salicylate"},
-    "N02BE": {"category": "analgesic_anilide",               "category_group": "analgesic",         "is_prescription": False, "atc_code": "N02BE", "drug_class": "anilide"},
-    "N05B":  {"category": "anxiolytic",                      "category_group": "psychoactive",      "is_prescription": True,  "atc_code": "N05B",  "drug_class": "benzodiazepine"},
-    "N05C":  {"category": "hypnotic_sedative",               "category_group": "psychoactive",      "is_prescription": True,  "atc_code": "N05C",  "drug_class": "sedative"},
-    "R03":   {"category": "respiratory_obstructive",         "category_group": "respiratory",       "is_prescription": True,  "atc_code": "R03",   "drug_class": "bronchodilator"},
-    "R06":   {"category": "antihistamine",                   "category_group": "respiratory",       "is_prescription": False, "atc_code": "R06",   "drug_class": "antihistamine"},
+    "M01AB": {"category": "anti_inflammatory_acetic_acid",   "category_group": "anti_inflammatory", "is_prescription": True,  "atc_code": "M01AB", "drug_class": "NSAID"},
+    "M01AE": {"category": "anti_inflammatory_propionic_acid", "category_group": "anti_inflammatory", "is_prescription": False, "atc_code": "M01AE", "drug_class": "NSAID"},
+    "N02BA": {"category": "analgesic_salicylic_acid",         "category_group": "analgesic",         "is_prescription": False, "atc_code": "N02BA", "drug_class": "salicylate"},
+    "N02BE": {"category": "analgesic_anilide",                "category_group": "analgesic",         "is_prescription": False, "atc_code": "N02BE", "drug_class": "anilide"},
+    "N05B":  {"category": "anxiolytic",                       "category_group": "psychoactive",      "is_prescription": True,  "atc_code": "N05B",  "drug_class": "benzodiazepine"},
+    "N05C":  {"category": "hypnotic_sedative",                "category_group": "psychoactive",      "is_prescription": True,  "atc_code": "N05C",  "drug_class": "sedative"},
+    "R03":   {"category": "respiratory_obstructive",          "category_group": "respiratory",       "is_prescription": True,  "atc_code": "R03",   "drug_class": "bronchodilator"},
+    "R06":   {"category": "antihistamine",                    "category_group": "respiratory",       "is_prescription": False, "atc_code": "R06",   "drug_class": "antihistamine"},
 }
 
 print("Drug ATC code mapping:")
@@ -96,9 +100,24 @@ hourly_clean = hourly \
     ) \
     .withColumn("is_peak_hour",
         F.col("hour").between(10, 12) | F.col("hour").between(16, 19)
+    ) \
+    .withColumn(
+        # FIX: Convert datum from M/D/YYYY to ISO date, then build ISO 8601 timestamp
+        # Original: F.concat_ws("T", F.col("datum"), F.lpad(...)) -> "1/5/2014T08"
+        # Fixed:    to_date with explicit format then date_format -> "2014-01-05T08:00:00"
+        "datum_iso",
+        F.to_date(F.col("datum"), "M/d/yyyy")
     )
 
+# Verify datum_iso parsed correctly
+unparseable = hourly_clean.filter(
+    F.col("datum_iso").isNull() & F.col("datum").isNotNull()
+).count()
 print(f"Valid hourly records: {hourly_clean.count():,}")
+print(f"Unparseable datum values: {unparseable}")
+if unparseable > 0:
+    print("  WARNING: Some datum values could not be parsed to date")
+    hourly_clean.filter(F.col("datum_iso").isNull()).select("datum").distinct().show(5)
 
 time_dist = hourly_clean.groupBy("time_of_day").count().collect()
 print("\nTime of day distribution:")
@@ -136,6 +155,7 @@ for drug_col in DRUG_COLS:
     info = DRUG_MAP[drug_col]
 
     drug_events = hourly_clean.filter(
+        F.col("datum_iso").isNotNull() &
         F.col(drug_col).cast("double").isNotNull() &
         (F.col(drug_col).cast("double") > 0)
     ).select(
@@ -144,13 +164,17 @@ for drug_col in DRUG_COLS:
         F.lit("1.0").alias("event_version"),
         F.lit("pharmacy").alias("domain"),
         F.lit("pharma-sales-replay").alias("source_system"),
-        F.concat_ws("T",
-            F.col("datum"),
-            F.lpad(F.col("hour").cast("string"), 2, "0")
+        # FIX: Build ISO 8601 occurred_at from parsed date + zero-padded hour
+        # Format: YYYY-MM-DDTHH:00:00  e.g. 2014-01-05T08:00:00
+        F.concat(
+            F.date_format(F.col("datum_iso"), "yyyy-MM-dd"),
+            F.lit("T"),
+            F.lpad(F.col("hour").cast("string"), 2, "0"),
+            F.lit(":00:00")
         ).alias("occurred_at"),
         F.current_timestamp().cast("string").alias("ingested_at"),
         F.concat_ws("-",
-            F.col("datum"),
+            F.date_format(F.col("datum_iso"), "yyyy-MM-dd"),
             F.lit(drug_col),
             F.col("hour").cast("string")
         ).alias("correlation_id"),
@@ -186,6 +210,10 @@ for drug_col in DRUG_COLS:
 
     count = drug_events.count()
     print(f"  {drug_col} ({info['category']}): {count:,} events")
+
+# Verify occurred_at format sample
+print("\nSample occurred_at values (should be ISO 8601):")
+all_drug_events.select("occurred_at").limit(3).show(truncate=False)
 
 # COMMAND ----------
 
@@ -256,6 +284,12 @@ checks = {
     "null_payload":        df.filter(F.col("payload").isNull()).count(),
 }
 
+# Verify occurred_at is now ISO parseable
+unparseable_silver = df.filter(
+    F.col("occurred_at").isNotNull() &
+    F.expr("try_cast(occurred_at as date)").isNull()
+).count()
+
 print(f"Pharmacy rows in silver.events: {total:,}")
 print("\nNull checks (pharmacy rows only):")
 all_passed = True
@@ -266,6 +300,13 @@ for check, count in checks.items():
         all_passed = False
     print(f"  {status} {check}: {count:,} ({pct:.2f}%)")
 
+print(f"\nOccurred_at parseability check:")
+if unparseable_silver == 0:
+    print(f"  PASS: All occurred_at values parseable as date")
+else:
+    print(f"  FAIL: {unparseable_silver:,} unparseable occurred_at values")
+    all_passed = False
+
 print(f"\nOverall: {'PASS' if all_passed else 'FAIL - review above'}")
 
-display(df.select("event_id", "event_type", "domain", "occurred_at", "correlation_id", "payload").limit(5))
+display(df.select("event_id", "event_type", "domain", "occurred_at", "correlation_id").limit(5))
