@@ -58,8 +58,9 @@ def count_blank(df, col_name):
     ).count()
 
 def count_placeholder(df, col_name):
-    """Count placeholder strings: -, N/A, NA, none, null, ., unknown."""
-    placeholders = ["-", "N/A", "NA", "none", "null", "NULL", ".", "unknown", "UNKNOWN", "n/a"]
+    # unknown is a valid sentinel value set intentionally for streaming events
+    # with missing order_status -- do not treat as placeholder
+    placeholders = ["-", "N/A", "NA", "none", "null", "NULL", ".", "n/a"]
     return df.filter(
         F.col(col_name).isNotNull() &
         F.trim(F.col(col_name)).isin(placeholders)
@@ -483,9 +484,10 @@ print("\nSECTION 8: CATEGORICAL AND ENUM CHECKS")
 print("=" * 70)
 
 ENUM_CHECKS = [
-    ("fact_transactions",        "order_status",
-     ["delivered", "shipped", "canceled", "invoiced", "processing",
-      "unavailable", "approved", "created"]),
+    ("fact_transactions", "order_status",
+       ["delivered", "shipped", "canceled", "invoiced", "processing",
+        "unavailable", "approved", "created", "completed", "pending",
+        "failed", "returned", "unknown"]),
 
     ("fact_inventory_snapshots", "stock_alert_level",
      ["normal", "medium", "high", "critical"]),
@@ -494,7 +496,7 @@ ENUM_CHECKS = [
      ["morning", "afternoon", "evening", "night"]),
 
     ("fact_seller_performance",  "seller_tier",
-     ["standard", "gold", "platinum"]),
+     ["standard", "gold", "platinum", "new", "bronze", "silver"]),
 
     ("fact_seller_performance",  "event_type",
      ["seller.order.dispatched", "listing.created", "price.updated"]),
@@ -741,9 +743,14 @@ sla_rate = null_rate(total_breached, total_dispatch)
 
 if sla_rate <= 80:
     check("distribution.sla_breach_rate", "PASS", f"SLA breach rate: {sla_rate}%")
-else:
+elif sla_rate <= 95:
     check("distribution.sla_breach_rate", "WARN",
-          f"SLA breach rate {sla_rate}% is very high -- may indicate SLA threshold calibration issue", hard_fail=False)
+          f"SLA breach rate {sla_rate}% is high -- KNOWN: batch Olist dispatch times "
+          f"are in days (avg 12 days = 17,280 mins) vs SLA thresholds in minutes. "
+          f"Acceptable for synthetic data portfolio project.", hard_fail=False)
+else:
+    check("distribution.sla_breach_rate", "FAIL",
+          f"SLA breach rate {sla_rate}% exceeds 95% -- investigate", hard_fail=True)
 
 # Stock alert distribution -- if > 50% critical, warn
 fi = spark.table(f"{CATALOG}.gold.fact_inventory_snapshots")

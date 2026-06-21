@@ -1,13 +1,13 @@
 # Databricks notebook source
 # MAGIC %md
 # MAGIC ## GOLD - FACT SELLER PERFORMANCE
-# MAGIC **AWS Commerce Intelligence Platform**
-# MAGIC **Author:** Sharique Mohammad
-# MAGIC **Date:** June 2026
-# MAGIC **Purpose:** Build marketplace seller performance fact table
+# MAGIC **AWS Commerce Intelligence Platform**  
+# MAGIC **Author:** Sharique Mohammad  
+# MAGIC **Date:** June 2026  
+# MAGIC **Purpose:** Build marketplace seller performance fact table  
 # MAGIC **Input:** acip.silver.events (marketplace), acip.gold.dim_seller,
-# MAGIC            acip.gold.dim_date, acip.gold.dim_geography
-# MAGIC **Output:** acip.gold.fact_seller_performance
+# MAGIC            acip.gold.dim_date, acip.gold.dim_geography  
+# MAGIC **Output:** acip.gold.fact_seller_performance  
 # MAGIC
 # MAGIC **Fixes applied (June 2026):**
 # MAGIC   1. performance_key: F.abs(F.hash(event_id)) had 10 hash collisions.
@@ -109,6 +109,15 @@ marketplace = silver.filter(F.col("domain") == "marketplace") \
         F.col("p.new_price").alias("new_price"),
         F.col("p.change_pct").alias("change_pct"),
     ).filter(F.col("seller_id").isNotNull())
+
+# Filter out streaming dispatch events with incomplete payload
+# These are from old generator runs before fix was applied
+marketplace = marketplace.filter(
+    ~(
+        (F.col("event_type") == "seller.order.dispatched") &
+        F.col("price").isNull()
+    )
+)
 
 total = marketplace.count()
 print(f"Marketplace events parsed: {total:,}")

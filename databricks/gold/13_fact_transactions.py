@@ -26,6 +26,7 @@ from pyspark.sql.types import (
     StructType, StructField, StringType, DoubleType,
     BooleanType, IntegerType
 )
+from pyspark.sql import Window
 
 # COMMAND ----------
 
@@ -133,18 +134,37 @@ for row in event_dist:
 # COMMAND ----------
 
 # DBTITLE 1,STEP 2: Deduplicate on event_id
-print("STEP 2: DEDUPLICATE ON EVENT_ID")
+print("STEP 2: DEDUPLICATE ON EVENT_ID AND ORDER_ID")
 print("=" * 70)
 
-# FIX: 360 streaming events duplicated batch order.placed events
-# Deduplicate on event_id to keep one record per unique event
+# First deduplicate on event_id -- removes exact duplicate events
 before_dedup = ecommerce.count()
 ecommerce = ecommerce.dropDuplicates(["event_id"])
-after_dedup = ecommerce.count()
+after_event_dedup = ecommerce.count()
+print(f"After event_id dedup: {before_dedup:,} -> {after_event_dedup:,} (removed {before_dedup - after_event_dedup:,})")
 
-print(f"Before dedup: {before_dedup:,}")
-print(f"After dedup:  {after_dedup:,}")
-print(f"Removed:      {before_dedup - after_dedup:,}")
+# Second -- for order.placed events, keep only one per order_id
+# Streaming events duplicate batch order.placed events with different event_ids
+# Keep the batch record (olist-replay source) over streaming (ecommerce-simulator)
+# If no batch record exists, keep the earliest streaming record
+window_order = Window.partitionBy("order_id").orderBy(
+    F.when(F.col("occurred_at").rlike(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$"), 0)
+     .otherwise(1),
+    F.col("occurred_at").asc()
+)
+
+placed_deduped = ecommerce.filter(F.col("event_type") == "order.placed") \
+    .withColumn("row_num", F.row_number().over(window_order)) \
+    .filter(F.col("row_num") == 1) \
+    .drop("row_num")
+
+other_events = ecommerce.filter(F.col("event_type") != "order.placed")
+
+ecommerce = other_events.union(placed_deduped)
+after_order_dedup = ecommerce.count()
+
+print(f"After order_id dedup: {after_event_dedup:,} -> {after_order_dedup:,} (removed {after_event_dedup - after_order_dedup:,} duplicate order.placed)")
+print(f"Total removed: {before_dedup - after_order_dedup:,}")
 
 # COMMAND ----------
 
