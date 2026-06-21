@@ -1,11 +1,12 @@
 import os
 import logging
+import signal
 import boto3
 from datetime import datetime, timezone
 from pyflink.datastream import StreamExecutionEnvironment
 from pyflink.datastream.connectors.kafka import KafkaSource, KafkaOffsetsInitializer
 from pyflink.common.serialization import SimpleStringSchema
-from pyflink.common import WatermarkStrategy, Types
+from pyflink.common import WatermarkStrategy
 from pyflink.datastream.connectors.file_system import (
     FileSink,
     OutputFileConfig,
@@ -19,12 +20,25 @@ from cluster_utils import ensure_cluster_running
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-BOOTSTRAP_SERVERS = "localhost:9092"
-S3_BUCKET = "s3://acip-dev-bronze"
-S3_BUCKET_NAME = "acip-dev-bronze"
-TOPICS = ["ecommerce.events", "pharmacy.events", "marketplace.events"]
-REGION = "eu-central-1"
-DOMAINS = ["ecommerce", "pharmacy", "marketplace"]
+BOOTSTRAP_SERVERS  = "localhost:9092"
+S3_BUCKET          = "s3://acip-dev-bronze"
+S3_BUCKET_NAME     = "acip-dev-bronze"
+TOPICS             = ["ecommerce.events", "pharmacy.events", "marketplace.events"]
+REGION             = "eu-central-1"
+DOMAINS            = ["ecommerce", "pharmacy", "marketplace"]
+
+# Fix applied June 2026:
+# Checkpoint interval reduced from 60s to 10s so files finalise quickly.
+# Files stay as _tmp_ until a checkpoint completes -- with 60s interval,
+# cancelling before 60s left all files as temp. 10s ensures at least one
+# checkpoint completes within a short generator run.
+CHECKPOINT_INTERVAL_MS = 10_000   # 10 seconds
+
+# Rolling policy: roll file after 5 minutes OR 1 minute of inactivity
+# With 10s checkpoints, completed files are committed every ~10s
+ROLLING_PART_SIZE_BYTES  = 128 * 1024 * 1024  # 128 MB
+ROLLING_INTERVAL_MS      = 5 * 60 * 1000       # 5 minutes
+ROLLING_INACTIVITY_MS    = 60 * 1000            # 1 minute
 
 
 def create_kafka_source(topic):
@@ -68,34 +82,29 @@ def cleanup_todays_s3_partitions():
                 Bucket=S3_BUCKET_NAME,
                 Delete={"Objects": keys}
             )
-            logger.info(
-                f"Cleared {len(keys)} S3 files for partition: {prefix}"
-            )
+            logger.info(f"Cleared {len(keys)} S3 files for partition: {prefix}")
         except Exception as e:
             logger.warning(
-                f"Could not clear S3 partition {prefix}: {e}. "
-                f"Proceeding anyway."
+                f"Could not clear S3 partition {prefix}: {e}. Proceeding anyway."
             )
 
 
 def main():
     ensure_cluster_running()
-
     cleanup_todays_s3_partitions()
 
     env = StreamExecutionEnvironment.get_execution_environment()
     env.set_parallelism(1)
-    env.enable_checkpointing(60000)
+
+    # Fix: 10s checkpoint interval so files finalise within one generator run
+    # Previously 60s -- files stayed _tmp_ if job cancelled before checkpoint
+    env.enable_checkpointing(CHECKPOINT_INTERVAL_MS)
 
     jar_dir = os.path.join(
         os.path.dirname(os.path.abspath(__file__)), "jars"
     )
-    kafka_jar = os.path.join(
-        jar_dir, "flink-connector-kafka-5.0.0-2.2.jar"
-    )
-    s3_jar = os.path.join(
-        jar_dir, "flink-s3-fs-hadoop-2.2.0.jar"
-    )
+    kafka_jar = os.path.join(jar_dir, "flink-connector-kafka-5.0.0-2.2.jar")
+    s3_jar    = os.path.join(jar_dir, "flink-s3-fs-hadoop-2.2.0.jar")
     env.add_jars(f"file://{kafka_jar}", f"file://{s3_jar}")
 
     streams = []
@@ -123,9 +132,9 @@ def main():
             )
             .with_rolling_policy(
                 RollingPolicy.default_rolling_policy(
-                    part_size=1024 * 1024 * 128,
-                    rollover_interval=5 * 60 * 1000,
-                    inactivity_interval=60 * 1000,
+                    part_size=ROLLING_PART_SIZE_BYTES,
+                    rollover_interval=ROLLING_INTERVAL_MS,
+                    inactivity_interval=ROLLING_INACTIVITY_MS,
                 )
             )
             .build()
@@ -133,6 +142,9 @@ def main():
         stream.sink_to(sink).name(f"S3 Bronze Sink - {topic}")
 
     logger.info("Starting S3 Bronze Writer job...")
+    logger.info(f"Checkpoint interval: {CHECKPOINT_INTERVAL_MS}ms")
+    logger.info("NOTE: Wait at least 30 seconds after generators finish")
+    logger.info("      before cancelling -- allows final checkpoint to complete")
     env.execute("ACIP S3 Bronze Writer")
 
 
