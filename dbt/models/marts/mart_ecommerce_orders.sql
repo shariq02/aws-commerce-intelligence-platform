@@ -39,13 +39,17 @@ final as (
         quarter,
         day_of_week,
         is_weekend,
+        -- domain is always ecommerce for this mart
+        'ecommerce' as domain,
         total_amount,
         case
             when return_reason is not null then 0
+            when total_amount is null then 0
             else total_amount
         end as net_revenue,
         case
-            when is_installment = true then total_amount / max_installments
+            when total_amount is null then 0
+            when is_installment = true then total_amount / nullif(max_installments, 0)
             else total_amount
         end as effective_payment_amount,
         occurred_at
