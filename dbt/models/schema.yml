@@ -1,0 +1,328 @@
+version: 2
+
+models:
+  - name: stg_transactions
+    description: "Staged ecommerce transactions from fact_transactions gold table"
+    columns:
+      - name: transaction_key
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        data_tests:
+          - not_null
+      - name: customer_key
+        data_tests:
+          - not_null
+      - name: date_key
+        data_tests:
+          - not_null
+
+  - name: stg_inventory_snapshots
+    description: "Staged pharmacy inventory snapshots from fact_inventory_snapshots gold table"
+    columns:
+      - name: snapshot_key
+        data_tests:
+          - unique
+          - not_null
+      - name: product_key
+        data_tests:
+          - not_null
+      - name: occurred_at
+        data_tests:
+          - not_null
+
+  - name: stg_seller_performance
+    description: "Staged marketplace seller performance from fact_seller_performance gold table"
+    columns:
+      - name: performance_key
+        data_tests:
+          - unique
+          - not_null
+      - name: seller_key
+        data_tests:
+          - not_null
+
+  - name: stg_customers
+    description: "Staged current customers from dim_customer gold table"
+    columns:
+      - name: customer_key
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+
+  - name: int_ecommerce_orders
+    description: "Ecommerce orders joined with customer, geography, and date dimensions"
+    columns:
+      - name: transaction_key
+        data_tests:
+          - unique
+          - not_null
+      - name: year
+        data_tests:
+          - not_null
+      - name: month
+        data_tests:
+          - not_null
+
+  - name: int_pharmacy_dispensing
+    description: "Pharmacy dispensing joined with product dimension, dates from occurred_at"
+    columns:
+      - name: snapshot_key
+        data_tests:
+          - unique
+          - not_null
+      - name: year
+        data_tests:
+          - not_null
+      - name: month
+        data_tests:
+          - not_null
+
+  - name: int_marketplace_performance
+    description: "Marketplace performance joined with seller and date dimensions"
+    columns:
+      - name: performance_key
+        data_tests:
+          - unique
+          - not_null
+      - name: year
+        data_tests:
+          - not_null
+      - name: month
+        data_tests:
+          - not_null
+
+  - name: mart_ecommerce_orders
+    description: "Wide ecommerce orders mart with customer, geography, and date dimensions"
+    columns:
+      - name: transaction_key
+        data_tests:
+          - unique
+          - not_null
+      - name: order_id
+        data_tests:
+          - not_null
+      - name: domain
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['ecommerce']
+      - name: order_status
+        data_tests:
+          - not_null
+      - name: total_amount
+        # 8 streaming events intentionally set to null (zero amount replaced with null)
+        # These are known and accepted -- tested in Gold validation notebook
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: net_revenue
+        data_tests:
+          - not_null
+      - name: year
+        data_tests:
+          - not_null
+      - name: month
+        data_tests:
+          - not_null
+
+  - name: mart_pharmacy_dispensing
+    description: "Wide pharmacy dispensing mart with product dimension and derived dates"
+    columns:
+      - name: snapshot_key
+        data_tests:
+          - unique
+          - not_null
+      - name: domain
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['pharmacy']
+      - name: stock_level
+        data_tests:
+          - not_null
+      - name: stock_alert_level
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['normal', 'medium', 'high', 'critical']
+      - name: is_below_reorder
+        data_tests:
+          - not_null
+      - name: year
+        data_tests:
+          - not_null
+      - name: month
+        data_tests:
+          - not_null
+
+  - name: mart_marketplace_performance
+    description: "Wide marketplace seller performance mart with dispatch SLA metrics"
+    columns:
+      - name: performance_key
+        data_tests:
+          - unique
+          - not_null
+      - name: domain
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['marketplace']
+      - name: is_sla_breached
+        # Only dispatch events have is_sla_breached -- listing.created and
+        # price.updated events correctly have null here
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: gross_revenue
+        # Only events with price have gross_revenue -- price.updated events
+        # may have null gross_revenue where price column is not applicable
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: year
+        data_tests:
+          - not_null
+      - name: month
+        data_tests:
+          - not_null
+
+  - name: mart_cross_domain_summary
+    description: "Monthly cross-domain summary combining ecommerce, pharmacy, marketplace"
+    columns:
+      - name: year
+        data_tests:
+          - not_null
+      - name: month
+        data_tests:
+          - not_null
+      - name: ecommerce_transactions
+        data_tests:
+          - not_null
+      - name: pharmacy_dispensing_events
+        data_tests:
+          - not_null
+      - name: marketplace_dispatch_events
+        data_tests:
+          - not_null
+
+# ---------------------------------------------------------------------------
+  # NEW MARTS - append these blocks to the existing schema.yml models section
+  # ---------------------------------------------------------------------------
+
+  - name: mart_customer_lifetime_value
+    description: >
+      Customer lifetime value mart. One row per current customer.
+      Combines transaction history with customer dimension to produce
+      CLV segments, churn flags, order frequency, and spend metrics.
+      Grain: customer_id (current SCD2 record only).
+    columns:
+      - name: clv_key
+        data_tests:
+          - unique
+          - not_null
+      - name: customer_id
+        data_tests:
+          - not_null
+      - name: clv_segment
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['high_value', 'mid_value', 'low_value', 'no_spend']
+      - name: total_orders
+        data_tests:
+          - not_null
+      - name: total_spend
+        data_tests:
+          - not_null
+      - name: is_churned
+        data_tests:
+          - not_null
+      - name: customer_segment
+        data_tests:
+          - not_null
+
+  - name: mart_seller_leaderboard
+    description: >
+      Seller performance leaderboard. One row per current seller.
+      Ranks sellers by revenue, SLA compliance rate, order volume,
+      and dispatch speed. Includes overall composite rank.
+      Grain: seller_id (current SCD2 record only).
+    columns:
+      - name: leaderboard_key
+        data_tests:
+          - unique
+          - not_null
+      - name: seller_id
+        data_tests:
+          - not_null
+      - name: seller_tier
+        data_tests:
+          - not_null
+      - name: overall_rank
+        data_tests:
+          - not_null
+      - name: rank_by_revenue
+        data_tests:
+          - not_null
+      - name: rank_by_sla_compliance
+        data_tests:
+          - not_null
+      - name: rank_by_volume
+        data_tests:
+          - not_null
+      - name: sla_breach_rate
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+
+  - name: mart_pharmacy_reorder_alerts
+    description: >
+      Latest inventory snapshot per pharmacy product with reorder urgency.
+      One row per product showing current stock state, urgency score,
+      recommended action, and historical stock context.
+      Grain: product_id (latest snapshot only).
+    columns:
+      - name: alert_key
+        data_tests:
+          - unique
+          - not_null
+      - name: product_id
+        data_tests:
+          - not_null
+      - name: atc_code
+        data_tests:
+          - not_null
+      - name: current_stock_level
+        data_tests:
+          - not_null
+      - name: reorder_threshold
+        data_tests:
+          - not_null
+      - name: stock_alert_level
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['normal', 'medium', 'high', 'critical']
+      - name: urgency_score
+        data_tests:
+          - not_null
+      - name: recommended_action
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['order_immediately', 'order_soon', 'monitor', 'sufficient', 'unknown']
+      - name: is_below_reorder
+        data_tests:
+          - not_null
+      - name: overall_urgency_rank
+        data_tests:
+          - not_null
