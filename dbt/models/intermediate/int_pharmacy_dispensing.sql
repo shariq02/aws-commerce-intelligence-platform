@@ -15,50 +15,58 @@ dim_product as (
     from {{ source('gold', 'dim_product') }}
 ),
 
-dim_date as (
+-- occurred_at has two formats:
+-- batch:     M/D/YYYY H:MMT08  e.g. 1/5/2014 8:00T08
+-- streaming: ISO 8601           e.g. 2026-01-15T10:30:00
+-- Parse both using TO_TIMESTAMP with fallback
+
+parsed as (
     select
-        date_key,
-        full_date,
-        year,
-        month,
-        quarter,
-        day_of_week,
-        is_weekend
-    from {{ source('gold', 'dim_date') }}
+        *,
+        coalesce(
+            -- Try ISO 8601 first (streaming events)
+            try_cast(occurred_at as timestamp),
+            -- Try M/D/YYYY H:MM format (batch events - strip trailing T08 suffix)
+            to_timestamp(
+                regexp_replace(occurred_at, 'T[0-9]+$', ''),
+                'M/d/yyyy H:mm'
+            )
+        ) as occurred_ts
+    from inventory
 ),
 
 joined as (
     select
-        i.snapshot_key,
-        i.event_id,
-        i.event_type,
-        i.correlation_id,
-        i.quantity,
-        i.stock_level,
-        i.reorder_threshold,
-        i.days_of_supply,
-        i.stock_alert_level,
-        i.fill_time_mins,
-        i.is_prescription,
-        i.time_of_day,
-        i.is_peak_hour,
-        i.is_weekend,
-        i.hour_of_day,
-        i.occurred_at,
-        p.product_id,
-        p.category,
-        p.category_group,
-        p.atc_code,
-        p.drug_class,
-        p.domain,
-        d.full_date,
-        d.year,
-        d.month,
-        d.quarter,
-        d.day_of_week
-    from inventory i
-    left join dim_product p on i.product_key = p.product_key
-    left join dim_date d on i.date_key = d.date_key
+        p.snapshot_key,
+        p.event_id,
+        p.event_type,
+        p.correlation_id,
+        p.quantity,
+        p.stock_level,
+        p.reorder_threshold,
+        p.days_of_supply,
+        p.stock_alert_level,
+        p.fill_time_mins,
+        p.is_prescription,
+        p.time_of_day,
+        p.is_peak_hour,
+        p.is_weekend,
+        p.hour_of_day,
+        p.occurred_at,
+        pr.product_id,
+        pr.category,
+        pr.category_group,
+        pr.atc_code,
+        pr.drug_class,
+        pr.domain,
+        cast(p.occurred_ts as date) as full_date,
+        year(p.occurred_ts) as year,
+        month(p.occurred_ts) as month,
+        quarter(p.occurred_ts) as quarter,
+        dayofweek(p.occurred_ts) as day_of_week
+    from parsed p
+    left join dim_product pr on p.product_key = pr.product_key
+    where p.occurred_ts is not null
 )
 
 select * from joined

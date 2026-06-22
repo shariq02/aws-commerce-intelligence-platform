@@ -26,6 +26,15 @@ dim_date as (
     from {{ source('gold', 'dim_date') }}
 ),
 
+-- Parse occurred_at as fallback when date_key is null
+-- occurred_at is ISO 8601 format for marketplace events
+parsed as (
+    select
+        *,
+        try_cast(occurred_at as timestamp) as occurred_ts
+    from performance
+),
+
 joined as (
     select
         p.performance_key,
@@ -51,15 +60,19 @@ joined as (
         p.occurred_at,
         s.seller_id,
         s.seller_city,
-        d.full_date,
-        d.year,
-        d.month,
-        d.quarter,
-        d.day_of_week,
-        d.is_weekend
-    from performance p
+        -- Use dim_date if date_key exists, fall back to occurred_at parsing
+        coalesce(d.full_date, cast(p.occurred_ts as date)) as full_date,
+        coalesce(d.year, year(p.occurred_ts)) as year,
+        coalesce(d.month, month(p.occurred_ts)) as month,
+        coalesce(d.quarter, quarter(p.occurred_ts)) as quarter,
+        coalesce(d.day_of_week, dayofweek(p.occurred_ts)) as day_of_week,
+        coalesce(d.is_weekend,
+            case when dayofweek(p.occurred_ts) in (1, 7) then true else false end
+        ) as is_weekend
+    from parsed p
     left join dim_seller s on p.seller_key = s.seller_key
     left join dim_date d on p.date_key = d.date_key
+    where coalesce(d.year, year(p.occurred_ts)) is not null
 )
 
 select * from joined
