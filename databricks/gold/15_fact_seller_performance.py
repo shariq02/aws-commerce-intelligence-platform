@@ -47,7 +47,6 @@ if current_version is not None:
 # COMMAND ----------
 
 # DBTITLE 1,STEP 1: Parse Marketplace Events from Silver
-# DBTITLE 1,STEP 1: Parse Marketplace Events from Silver
 print("STEP 1: PARSE MARKETPLACE EVENTS FROM SILVER")
 print("=" * 70)
 
@@ -125,15 +124,17 @@ marketplace = marketplace.withColumn(
     F.when(
         F.col("sla_threshold_mins").isNotNull() &
         (F.col("sla_threshold_mins") < 2880),
-        F.when(F.col("seller_tier") == "platinum", 2  * 1440)
-         .when(F.col("seller_tier") == "gold",     3  * 1440)
-         .when(F.col("seller_tier") == "standard", 5  * 1440)
-         .when(F.col("seller_tier") == "silver",   7  * 1440)
-         .when(F.col("seller_tier") == "bronze",   10 * 1440)
-         .otherwise(14 * 1440)
+        # Data-driven SLA thresholds at p80 of actual Olist dispatch times
+        # Platinum p80=25,739 mins (17.9 days), Gold p80=24,114 mins (16.7 days)
+        # Standard p80=21,363 mins (14.8 days), new/silver/bronze use standard
+        F.when(F.col("seller_tier") == "platinum", 25739)
+         .when(F.col("seller_tier") == "gold",     24114)
+         .when(F.col("seller_tier") == "standard", 21363)
+         .when(F.col("seller_tier") == "silver",   21363)
+         .when(F.col("seller_tier") == "bronze",   21363)
+         .otherwise(21363)
     ).otherwise(F.col("sla_threshold_mins"))
 ).withColumn(
-    # Recalculate is_sla_breached using corrected threshold
     "is_sla_breached",
     F.when(
         F.col("dispatch_time_mins").isNotNull() &
