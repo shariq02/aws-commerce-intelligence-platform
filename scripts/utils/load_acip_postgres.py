@@ -35,6 +35,7 @@ SCHEMA_MAP = {
     "gold": "acip_gold",
     "quality": "acip_quality",
     "dbt_marts_dbt_marts": "acip_dbt_marts",
+    "silver": "acip_silver",
 }
 
 print("=" * 70)

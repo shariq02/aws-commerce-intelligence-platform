@@ -102,6 +102,30 @@ TYPE_MAP = {
             "BOOLEAN": ["passed"],
         },
     },
+    "acip_silver": {
+        "ecommerce_orders": {
+            "BOOLEAN": ["is_installment", "is_multi_item", "is_multi_seller",
+                        "delivery_on_time", "has_negative_review"],
+            "INT":  ["max_installments", "item_count"],
+            "DOUBLE PRECISION": ["total_amount", "fulfilment_time_mins",
+                                  "fulfilment_time_days", "avg_review_score"],
+        },
+        "pharmacy_dispensing": {
+            "BOOLEAN": ["is_prescription", "is_weekend", "is_business_hours",
+                        "is_peak_hour"],
+            "INT":  ["year", "month", "hour", "stock_level",
+                     "reorder_threshold", "fill_time_mins"],
+            "DOUBLE PRECISION": ["quantity"],
+        },
+        "marketplace_dispatches": {
+            "BOOLEAN": ["is_sla_breached"],
+            "INT":  ["sla_threshold_mins"],
+            "DOUBLE PRECISION": ["price", "freight_value", "dispatch_time_mins",
+                                  "dispatch_time_days", "old_price", "new_price",
+                                  "change_pct", "total_orders", "total_revenue"],
+            "BIGINT": ["unique_products"],
+        },
+    },
     "acip_dbt_marts": {
         "mart_ecommerce_orders": {
             "BOOLEAN": ["is_installment", "is_multi_item", "is_multi_seller",
