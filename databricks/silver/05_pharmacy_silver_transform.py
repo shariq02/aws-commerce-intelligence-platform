@@ -312,3 +312,63 @@ else:
 print(f"\nOverall: {'PASS' if all_passed else 'FAIL - review above'}")
 
 display(df.select("event_id", "event_type", "domain", "occurred_at", "correlation_id").limit(5))
+
+# COMMAND ----------
+
+# DBTITLE 1,STEP 10: Write Flat silver.pharmacy_dispensing
+print("STEP 10: WRITE FLAT silver.pharmacy_dispensing")
+print("=" * 70)
+print("Parallel flat materialisation of silver.events pharmacy rows.")
+print("silver.events is untouched. This table serves Power BI and Grafana directly.")
+print("Gold notebooks continue to read from silver.events -- no Gold changes needed.")
+
+FLAT_TARGET = f"{CATALOG}.silver.pharmacy_dispensing"
+
+pharmacy_flat = spark.table(TARGET_TABLE) \
+    .filter(F.col("domain") == "pharmacy") \
+    .select(
+        F.col("event_id"),
+        F.col("event_type"),
+        F.col("domain"),
+        F.col("occurred_at"),
+        F.col("correlation_id"),
+        F.get_json_object(F.col("payload"), "$.product_id").alias("product_id"),
+        F.get_json_object(F.col("payload"), "$.category").alias("category"),
+        F.get_json_object(F.col("payload"), "$.category_group").alias("category_group"),
+        F.get_json_object(F.col("payload"), "$.atc_code").alias("atc_code"),
+        F.get_json_object(F.col("payload"), "$.drug_class").alias("drug_class"),
+        F.get_json_object(F.col("payload"), "$.quantity").cast("double").alias("quantity"),
+        F.get_json_object(F.col("payload"), "$.is_prescription").cast("boolean").alias("is_prescription"),
+        F.get_json_object(F.col("payload"), "$.year").cast("int").alias("year"),
+        F.get_json_object(F.col("payload"), "$.month").cast("int").alias("month"),
+        F.get_json_object(F.col("payload"), "$.hour").cast("int").alias("hour"),
+        F.get_json_object(F.col("payload"), "$.weekday").alias("weekday"),
+        F.get_json_object(F.col("payload"), "$.is_weekend").cast("boolean").alias("is_weekend"),
+        F.get_json_object(F.col("payload"), "$.time_of_day").alias("time_of_day"),
+        F.get_json_object(F.col("payload"), "$.is_business_hours").cast("boolean").alias("is_business_hours"),
+        F.get_json_object(F.col("payload"), "$.is_peak_hour").cast("boolean").alias("is_peak_hour"),
+        F.get_json_object(F.col("payload"), "$.stock_level").cast("int").alias("stock_level"),
+        F.get_json_object(F.col("payload"), "$.reorder_threshold").cast("int").alias("reorder_threshold"),
+        F.get_json_object(F.col("payload"), "$.fill_time_mins").cast("int").alias("fill_time_mins"),
+    )
+
+pharmacy_flat.write \
+    .format("delta") \
+    .mode("append") \
+    .option("mergeSchema", "true") \
+    .saveAsTable(FLAT_TARGET)
+
+flat_count = spark.table(FLAT_TARGET).count()
+print(f"\nPASS: {FLAT_TARGET} written - {flat_count:,} rows")
+
+flat_checks = {
+    "null_event_id":   spark.table(FLAT_TARGET).filter(F.col("event_id").isNull()).count(),
+    "null_product_id": spark.table(FLAT_TARGET).filter(F.col("product_id").isNull()).count(),
+    "null_quantity":   spark.table(FLAT_TARGET).filter(F.col("quantity").isNull()).count(),
+    "null_stock_level": spark.table(FLAT_TARGET).filter(F.col("stock_level").isNull()).count(),
+}
+for check, count in flat_checks.items():
+    status = "PASS" if count == 0 else "WARN"
+    print(f"  {status} {check}: {count:,}")
+
+display(spark.table(FLAT_TARGET).limit(3))

@@ -103,7 +103,7 @@ payments_clean = payments \
     .withColumn("payment_installments", F.col("payment_installments").cast("int"))
 
 payment_totals = payments_clean.groupBy("order_id").agg(
-    F.sum("payment_value").alias("total_amount"),
+    F.round(F.sum("payment_value"), 2).alias("total_amount"),
     F.max("payment_installments").alias("max_installments"),
     F.first("payment_type").alias("payment_method")
 ).withColumn(
@@ -599,3 +599,67 @@ display(df.select(
     "event_id", "event_type", "domain",
     "occurred_at", "correlation_id", "payload"
 ).limit(5))
+
+# COMMAND ----------
+
+# DBTITLE 1,STEP 16: Write Flat silver.ecommerce_orders
+print("STEP 16: WRITE FLAT silver.ecommerce_orders")
+print("=" * 70)
+print("Parallel flat materialisation of silver.events ecommerce rows.")
+print("silver.events is untouched. This table serves Power BI and Grafana directly.")
+print("Gold notebooks continue to read from silver.events -- no Gold changes needed.")
+
+FLAT_TARGET = f"{CATALOG}.silver.ecommerce_orders"
+
+ecommerce_flat = all_events.select(
+    F.col("event_id"),
+    F.col("event_type"),
+    F.col("domain"),
+    F.col("occurred_at"),
+    F.col("correlation_id").alias("order_id"),
+    F.get_json_object(F.col("payload"), "$.customer_id").alias("customer_id"),
+    F.get_json_object(F.col("payload"), "$.customer_unique_id").alias("customer_unique_id"),
+    F.get_json_object(F.col("payload"), "$.customer_segment").alias("customer_segment"),
+    F.get_json_object(F.col("payload"), "$.order_value_tier").alias("order_value_tier"),
+    F.get_json_object(F.col("payload"), "$.region").alias("region"),
+    F.get_json_object(F.col("payload"), "$.state_region").alias("state_region"),
+    F.get_json_object(F.col("payload"), "$.customer_state").alias("customer_state"),
+    F.get_json_object(F.col("payload"), "$.total_amount").cast("double").alias("total_amount"),
+    F.get_json_object(F.col("payload"), "$.payment_method").alias("payment_method"),
+    F.get_json_object(F.col("payload"), "$.is_installment").cast("boolean").alias("is_installment"),
+    F.get_json_object(F.col("payload"), "$.max_installments").cast("int").alias("max_installments"),
+    F.get_json_object(F.col("payload"), "$.order_status").alias("order_status"),
+    F.get_json_object(F.col("payload"), "$.item_count").cast("int").alias("item_count"),
+    F.get_json_object(F.col("payload"), "$.is_multi_item").cast("boolean").alias("is_multi_item"),
+    F.get_json_object(F.col("payload"), "$.is_multi_seller").cast("boolean").alias("is_multi_seller"),
+    F.get_json_object(F.col("payload"), "$.primary_seller_id").alias("primary_seller_id"),
+    F.get_json_object(F.col("payload"), "$.fulfilment_time_mins").cast("double").alias("fulfilment_time_mins"),
+    F.get_json_object(F.col("payload"), "$.fulfilment_time_days").cast("double").alias("fulfilment_time_days"),
+    F.get_json_object(F.col("payload"), "$.fulfilment_bucket").alias("fulfilment_bucket"),
+    F.get_json_object(F.col("payload"), "$.delivery_on_time").cast("boolean").alias("delivery_on_time"),
+    F.get_json_object(F.col("payload"), "$.avg_review_score").cast("double").alias("avg_review_score"),
+    F.get_json_object(F.col("payload"), "$.review_sentiment").alias("review_sentiment"),
+    F.get_json_object(F.col("payload"), "$.has_negative_review").cast("boolean").alias("has_negative_review"),
+    F.get_json_object(F.col("payload"), "$.return_reason").alias("return_reason"),
+)
+
+ecommerce_flat.write \
+    .format("delta") \
+    .mode("overwrite") \
+    .option("overwriteSchema", "true") \
+    .saveAsTable(FLAT_TARGET)
+
+flat_count = spark.table(FLAT_TARGET).count()
+print(f"\nPASS: {FLAT_TARGET} written - {flat_count:,} rows")
+
+flat_checks = {
+    "null_event_id":    spark.table(FLAT_TARGET).filter(F.col("event_id").isNull()).count(),
+    "null_order_id":    spark.table(FLAT_TARGET).filter(F.col("order_id").isNull()).count(),
+    "null_total_amount": spark.table(FLAT_TARGET).filter(F.col("total_amount").isNull()).count(),
+    "null_customer_id": spark.table(FLAT_TARGET).filter(F.col("customer_id").isNull()).count(),
+}
+for check, count in flat_checks.items():
+    status = "PASS" if count == 0 else "WARN"
+    print(f"  {status} {check}: {count:,}")
+
+display(spark.table(FLAT_TARGET).limit(3))

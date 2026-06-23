@@ -123,8 +123,8 @@ print("=" * 70)
 order_items_clean = order_items \
     .filter(F.col("seller_id").isNotNull()) \
     .filter(F.col("order_id").isNotNull()) \
-    .withColumn("price", F.col("price").cast("double")) \
-    .withColumn("freight_value", F.col("freight_value").cast("double")) \
+    .withColumn("price", F.round(F.col("price").cast("double"), 2)) \
+    .withColumn("freight_value", F.round(F.col("freight_value").cast("double"), 2)) \
     .filter(F.col("price").isNotNull() & (F.col("price") > 0))
 
 seller_metrics = order_items_clean.groupBy("seller_id").agg(
@@ -465,3 +465,67 @@ for check, count in checks.items():
 print(f"\nOverall: {'PASS' if all_passed else 'FAIL - review above'}")
 
 display(df.select("event_id", "event_type", "domain", "occurred_at", "correlation_id", "payload").limit(5))
+
+# COMMAND ----------
+
+# DBTITLE 1,STEP 13: Write Flat silver.marketplace_dispatches
+print("STEP 13: WRITE FLAT silver.marketplace_dispatches")
+print("=" * 70)
+print("Parallel flat materialisation of silver.events marketplace rows.")
+print("silver.events is untouched. This table serves Power BI and Grafana directly.")
+print("Gold notebooks continue to read from silver.events -- no Gold changes needed.")
+
+FLAT_TARGET = f"{CATALOG}.silver.marketplace_dispatches"
+
+marketplace_flat = spark.table(TARGET_TABLE) \
+    .filter(F.col("domain") == "marketplace") \
+    .select(
+        F.col("event_id"),
+        F.col("event_type"),
+        F.col("domain"),
+        F.col("occurred_at"),
+        F.col("correlation_id").alias("order_id"),
+        F.get_json_object(F.col("payload"), "$.seller_id").alias("seller_id"),
+        F.get_json_object(F.col("payload"), "$.seller_tier").alias("seller_tier"),
+        F.get_json_object(F.col("payload"), "$.seller_city").alias("seller_city"),
+        F.get_json_object(F.col("payload"), "$.seller_state").alias("seller_state"),
+        F.get_json_object(F.col("payload"), "$.seller_region").alias("seller_region"),
+        F.get_json_object(F.col("payload"), "$.product_id").alias("product_id"),
+        F.get_json_object(F.col("payload"), "$.category").alias("category"),
+        F.get_json_object(F.col("payload"), "$.category_group").alias("category_group"),
+        F.get_json_object(F.col("payload"), "$.price").cast("double").alias("price"),
+        F.get_json_object(F.col("payload"), "$.freight_value").cast("double").alias("freight_value"),
+        F.get_json_object(F.col("payload"), "$.dispatch_time_mins").cast("double").alias("dispatch_time_mins"),
+        F.get_json_object(F.col("payload"), "$.dispatch_time_days").cast("double").alias("dispatch_time_days"),
+        F.get_json_object(F.col("payload"), "$.sla_threshold_mins").cast("int").alias("sla_threshold_mins"),
+        F.get_json_object(F.col("payload"), "$.is_sla_breached").cast("boolean").alias("is_sla_breached"),
+        F.get_json_object(F.col("payload"), "$.dispatch_speed_bucket").alias("dispatch_speed_bucket"),
+        F.get_json_object(F.col("payload"), "$.old_price").cast("double").alias("old_price"),
+        F.get_json_object(F.col("payload"), "$.new_price").cast("double").alias("new_price"),
+        F.get_json_object(F.col("payload"), "$.change_pct").cast("double").alias("change_pct"),
+        F.get_json_object(F.col("payload"), "$.total_orders").cast("double").alias("total_orders"),
+        F.get_json_object(F.col("payload"), "$.total_revenue").cast("double").alias("total_revenue"),
+        F.get_json_object(F.col("payload"), "$.unique_products").cast("long").alias("unique_products"),
+    )
+
+marketplace_flat.write \
+    .format("delta") \
+    .mode("append") \
+    .option("mergeSchema", "true") \
+    .saveAsTable(FLAT_TARGET)
+
+flat_count = spark.table(FLAT_TARGET).count()
+print(f"\nPASS: {FLAT_TARGET} written - {flat_count:,} rows")
+
+flat_checks = {
+    "null_event_id":  spark.table(FLAT_TARGET).filter(F.col("event_id").isNull()).count(),
+    "null_seller_id": spark.table(FLAT_TARGET).filter(F.col("seller_id").isNull()).count(),
+    "null_price_on_dispatch": spark.table(FLAT_TARGET).filter(
+        (F.col("event_type") == "seller.order.dispatched") & F.col("price").isNull()
+    ).count(),
+}
+for check, count in flat_checks.items():
+    status = "PASS" if count == 0 else "WARN"
+    print(f"  {status} {check}: {count:,}")
+
+display(spark.table(FLAT_TARGET).limit(3))
