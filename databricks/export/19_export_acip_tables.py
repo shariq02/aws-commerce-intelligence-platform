@@ -16,7 +16,11 @@ spark = SparkSession.builder.getOrCreate()
 CATALOG = "acip"
 spark.sql(f"USE CATALOG {CATALOG}")
 
-SCHEMAS_TO_EXPORT = ["gold", "quality", "dbt_marts_dbt_marts"]
+SCHEMAS_TO_EXPORT = ["gold", "quality", "dbt_marts_dbt_marts", "silver"]
+
+# Silver tables to export -- only the flat analytical tables, not silver.events
+# silver.events is the universal event envelope and is not loaded to PostgreSQL
+SILVER_INCLUDE = {"ecommerce_orders", "pharmacy_dispensing", "marketplace_dispatches"}
 
 # dbt intermediate and staging views - exclude from export
 SKIP_TABLES = {
@@ -59,6 +63,12 @@ def get_tables(schema):
         name = t.tableName
         if name in SKIP_TABLES:
             print(f"  SKIP: {schema}.{name} (excluded view)")
+            continue
+        # For silver schema: only export the three flat analytical tables
+        # silver.events (universal event envelope) is excluded -- too large,
+        # not intended for PostgreSQL consumption
+        if schema == "silver" and name not in SILVER_INCLUDE:
+            print(f"  SKIP: {schema}.{name} (not in silver export list)")
             continue
         result.append(name)
     return result
