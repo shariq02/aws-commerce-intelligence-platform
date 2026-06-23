@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from typing import Optional
 
 from config import get_logger
 from database.dynamodb import get_table, safe_scan
@@ -100,6 +101,67 @@ def get_peak_hour_analysis(db: Session) -> list:
         GROUP BY hour_of_day
         ORDER BY hour_of_day ASC
     """)
+    rows = db.execute(sql).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_reorder_alerts(
+    db: Session,
+    urgency_score: Optional[int] = None,
+    is_prescription: Optional[bool] = None,
+    limit: int = 50,
+) -> list:
+    """
+    Pharmacy reorder alerts from mart_pharmacy_reorder_alerts.
+    Returns products ordered by urgency with stock context and
+    recommended actions. Supports filtering by urgency score and Rx status.
+    """
+    filters = []
+    params = {"limit": limit}
+
+    if urgency_score is not None:
+        filters.append("urgency_score = :urgency_score")
+        params["urgency_score"] = urgency_score
+
+    if is_prescription is not None:
+        filters.append("is_prescription = :is_prescription")
+        params["is_prescription"] = is_prescription
+
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+
+    sql = text(f"""
+        SELECT
+            product_id,
+            category,
+            category_group,
+            atc_code,
+            drug_class,
+            is_prescription,
+            current_stock_level,
+            reorder_threshold,
+            stock_buffer,
+            current_days_of_supply,
+            stock_alert_level,
+            urgency_score,
+            recommended_action,
+            is_below_reorder,
+            is_critical,
+            avg_stock_level,
+            min_stock_level,
+            max_stock_level,
+            avg_days_of_supply,
+            avg_fill_time_mins,
+            critical_count,
+            critical_frequency_rate,
+            stock_vs_avg_trend,
+            overall_urgency_rank,
+            last_snapshot_at
+        FROM acip_dbt_marts.mart_pharmacy_reorder_alerts
+        {where_clause}
+        ORDER BY overall_urgency_rank ASC
+        LIMIT :limit
+    """).bindparams(**params)
+
     rows = db.execute(sql).fetchall()
     return [dict(r._mapping) for r in rows]
 

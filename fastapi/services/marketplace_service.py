@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from typing import Optional
 
 from config import get_logger
 from database.dynamodb import get_table, safe_scan
@@ -114,6 +115,70 @@ def get_dispatch_speed_distribution(db: Session) -> list:
         GROUP BY dispatch_speed_bucket, seller_tier
         ORDER BY dispatch_speed_bucket, seller_tier
     """)
+    rows = db.execute(sql).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_seller_leaderboard(
+    db: Session,
+    tier: Optional[str] = None,
+    rank_by: str = "overall",
+    limit: int = 20,
+) -> list:
+    """
+    Seller leaderboard from mart_seller_leaderboard.
+    Supports filtering by tier and sorting by different rank dimensions.
+    """
+    rank_column_map = {
+        "overall":        "overall_rank",
+        "revenue":        "rank_by_revenue",
+        "sla_compliance": "rank_by_sla_compliance",
+        "volume":         "rank_by_volume",
+        "speed":          "rank_by_speed",
+    }
+    order_col = rank_column_map.get(rank_by, "overall_rank")
+
+    filters = []
+    params = {"limit": limit}
+
+    if tier:
+        filters.append("seller_tier = :tier")
+        params["tier"] = tier
+
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+
+    sql = text(f"""
+        SELECT
+            seller_id,
+            seller_tier,
+            seller_state,
+            seller_region,
+            total_orders,
+            total_revenue,
+            avg_order_value,
+            avg_dispatch_days,
+            sla_breach_count,
+            sla_compliant_count,
+            sla_breach_rate,
+            sla_compliance_rate,
+            avg_dispatch_speed_score,
+            express_count,
+            fast_count,
+            standard_count,
+            slow_count,
+            avg_freight_burden_rate,
+            rank_by_revenue,
+            rank_by_sla_compliance,
+            rank_by_volume,
+            rank_by_speed,
+            overall_score,
+            overall_rank
+        FROM acip_dbt_marts.mart_seller_leaderboard
+        {where_clause}
+        ORDER BY {order_col} ASC NULLS LAST
+        LIMIT :limit
+    """).bindparams(**params)
+
     rows = db.execute(sql).fetchall()
     return [dict(r._mapping) for r in rows]
 

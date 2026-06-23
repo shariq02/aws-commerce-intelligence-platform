@@ -14,6 +14,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+from typing import Optional
 
 from config import get_logger
 from database.dynamodb import get_table, safe_scan
@@ -94,6 +95,59 @@ def get_regional_orders(db: Session, limit: int = 10) -> list:
         ORDER BY order_count DESC
         LIMIT :limit
     """).bindparams(limit=limit)
+    rows = db.execute(sql).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_customer_ltv(
+    db: Session,
+    clv_segment: Optional[str] = None,
+    churned_only: bool = False,
+    limit: int = 50,
+) -> list:
+    """
+    Customer lifetime value from mart_customer_lifetime_value.
+    Supports optional filtering by CLV segment and churn status.
+    """
+    filters = []
+    params = {"limit": limit}
+
+    if clv_segment:
+        filters.append("clv_segment = :clv_segment")
+        params["clv_segment"] = clv_segment
+
+    if churned_only:
+        filters.append("is_churned = TRUE")
+
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+
+    sql = text(f"""
+        SELECT
+            customer_id,
+            customer_segment,
+            clv_segment,
+            total_orders,
+            total_spend,
+            avg_order_value,
+            total_returns,
+            return_rate,
+            first_order_date,
+            last_order_date,
+            customer_tenure_days,
+            active_months,
+            orders_per_active_month,
+            days_since_last_order,
+            is_churned,
+            p80_spend_threshold,
+            p50_spend_threshold,
+            customer_state,
+            state_region
+        FROM acip_dbt_marts.mart_customer_lifetime_value
+        {where_clause}
+        ORDER BY total_spend DESC NULLS LAST
+        LIMIT :limit
+    """).bindparams(**params)
+
     rows = db.execute(sql).fetchall()
     return [dict(r._mapping) for r in rows]
 
