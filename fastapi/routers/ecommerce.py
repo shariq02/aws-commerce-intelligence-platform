@@ -4,12 +4,12 @@
 # Date: June 2026
 # ====================================================================
 # FILE: fastapi/routers/ecommerce.py
-# Purpose: 8 ecommerce endpoints (4 analytical, 4 real-time)
+# Purpose: 9 ecommerce endpoints (5 analytical, 4 real-time)
 # ====================================================================
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from database.postgres import get_db
 from services import ecommerce_service
@@ -49,6 +49,32 @@ def regional_orders(
 ):
     """Order count and revenue by state region."""
     return ecommerce_service.get_regional_orders(db, limit=limit)
+
+
+@router.get("/analytics/customer-ltv")
+def customer_lifetime_value(
+    clv_segment: Optional[str] = Query(
+        default=None,
+        description="Filter by CLV segment: high_value, mid_value, low_value, no_spend"
+    ),
+    churned_only: bool = Query(
+        default=False,
+        description="Return only churned customers (no orders in last 180 days)"
+    ),
+    limit: int = Query(default=50, ge=1, le=500, description="Number of customers to return"),
+    db: Session = Depends(get_db),
+):
+    """
+    Customer lifetime value analysis from mart_customer_lifetime_value.
+    Returns CLV segments, total spend, order frequency, churn flag,
+    and spend percentile thresholds.
+    """
+    return ecommerce_service.get_customer_ltv(
+        db,
+        clv_segment=clv_segment,
+        churned_only=churned_only,
+        limit=limit,
+    )
 
 
 # ---------------------------------------------------------------------------

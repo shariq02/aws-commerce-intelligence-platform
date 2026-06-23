@@ -4,7 +4,7 @@
 # Date: June 2026
 # ====================================================================
 # FILE: fastapi/routers/pharmacy.py
-# Purpose: 6 pharmacy endpoints (2 real-time, 4 analytical)
+# Purpose: 7 pharmacy endpoints (2 real-time, 5 analytical)
 # ====================================================================
 
 from fastapi import APIRouter, Depends, Query
@@ -65,3 +65,30 @@ def rx_otc_summary(db: Session = Depends(get_db)):
 def peak_hour_analysis(db: Session = Depends(get_db)):
     """Dispensing event count and fill time by hour of day."""
     return pharmacy_service.get_peak_hour_analysis(db)
+
+
+@router.get("/analytics/reorder-alerts")
+def reorder_alerts(
+    urgency_score: Optional[int] = Query(
+        default=None,
+        ge=1, le=4,
+        description="Filter by urgency score: 4=critical, 3=high, 2=medium, 1=normal"
+    ),
+    is_prescription: Optional[bool] = Query(
+        default=None,
+        description="Filter by prescription status: true=Rx only, false=OTC only"
+    ),
+    limit: int = Query(default=50, ge=1, le=200, description="Number of products to return"),
+    db: Session = Depends(get_db),
+):
+    """
+    Pharmacy inventory reorder alerts from mart_pharmacy_reorder_alerts.
+    Returns products ordered by urgency with current stock levels,
+    days of supply, recommended action, and historical stock context.
+    """
+    return pharmacy_service.get_reorder_alerts(
+        db,
+        urgency_score=urgency_score,
+        is_prescription=is_prescription,
+        limit=limit,
+    )

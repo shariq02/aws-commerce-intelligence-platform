@@ -4,11 +4,12 @@
 # Date: June 2026
 # ====================================================================
 # FILE: fastapi/routers/marketplace.py
-# Purpose: 7 marketplace endpoints (2 real-time, 5 analytical)
+# Purpose: 8 marketplace endpoints (2 real-time, 6 analytical)
 # ====================================================================
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from database.postgres import get_db
 from services import marketplace_service
@@ -67,3 +68,29 @@ def freight_burden(db: Session = Depends(get_db)):
 def dispatch_speed(db: Session = Depends(get_db)):
     """Dispatch speed bucket distribution by seller tier."""
     return marketplace_service.get_dispatch_speed_distribution(db)
+
+
+@router.get("/analytics/seller-leaderboard")
+def seller_leaderboard(
+    tier: Optional[str] = Query(
+        default=None,
+        description="Filter by seller tier: platinum, gold, standard, new"
+    ),
+    rank_by: str = Query(
+        default="overall",
+        description="Sort by: overall, revenue, sla_compliance, volume, speed"
+    ),
+    limit: int = Query(default=20, ge=1, le=100, description="Number of sellers to return"),
+    db: Session = Depends(get_db),
+):
+    """
+    Seller performance leaderboard from mart_seller_leaderboard.
+    Returns sellers ranked by revenue, SLA compliance, order volume,
+    and dispatch speed with composite overall rank.
+    """
+    return marketplace_service.get_seller_leaderboard(
+        db,
+        tier=tier,
+        rank_by=rank_by,
+        limit=limit,
+    )
