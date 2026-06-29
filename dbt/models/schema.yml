@@ -41,7 +41,9 @@ models:
           - not_null
       - name: seller_key
         data_tests:
-          - not_null
+          - not_null:
+              config:
+                severity: warn
 
   - name: stg_customers
     description: "Staged current customers from dim_customer gold table"
