@@ -183,6 +183,94 @@ def get_seller_leaderboard(
     return [dict(r._mapping) for r in rows]
 
 
+def get_time_to_first_sale(
+    db: Session,
+    seller_tier: Optional[str] = None,
+    category: Optional[str] = None,
+) -> list:
+    """
+    Time between listing.created and first dispatch from
+    mart_time_to_first_sale. Serves MK-04.
+    Supports optional filtering by seller tier and category.
+    """
+    filters = []
+    params = {}
+
+    if seller_tier:
+        filters.append("seller_tier = :seller_tier")
+        params["seller_tier"] = seller_tier
+
+    if category:
+        filters.append("category = :category")
+        params["category"] = category
+
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+
+    sql = text(f"""
+        SELECT
+            seller_tier,
+            category,
+            category_group,
+            first_sale_speed_bucket,
+            COUNT(listing_id) AS listing_count,
+            AVG(time_to_first_sale_days) AS avg_time_to_first_sale_days,
+            MIN(time_to_first_sale_days) AS min_time_to_first_sale_days,
+            MAX(time_to_first_sale_days) AS max_time_to_first_sale_days
+        FROM acip_dbt_marts.mart_time_to_first_sale
+        {where_clause}
+        GROUP BY seller_tier, category, category_group, first_sale_speed_bucket
+        ORDER BY avg_time_to_first_sale_days ASC
+    """).bindparams(**params)
+
+    rows = db.execute(sql).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
+def get_seller_breach_alerts(
+    db: Session,
+    flagged_only: bool = True,
+    seller_tier: Optional[str] = None,
+    limit: int = 50,
+) -> list:
+    """
+    Daily seller SLA breach rate alerts from mart_seller_breach_alerts.
+    Batch reframe of real-time session-window breach alert. Serves AD-03.
+    Defaults to flagged sellers only (breach_rate > 20%).
+    """
+    filters = []
+    params = {"limit": limit}
+
+    if flagged_only:
+        filters.append("is_flagged = TRUE")
+
+    if seller_tier:
+        filters.append("seller_tier = :seller_tier")
+        params["seller_tier"] = seller_tier
+
+    where_clause = "WHERE " + " AND ".join(filters) if filters else ""
+
+    sql = text(f"""
+        SELECT
+            seller_key,
+            seller_tier,
+            seller_state,
+            seller_region,
+            dispatch_date,
+            total_dispatches,
+            breach_count,
+            breach_rate,
+            is_flagged,
+            breach_severity
+        FROM acip_dbt_marts.mart_seller_breach_alerts
+        {where_clause}
+        ORDER BY dispatch_date DESC, breach_rate DESC
+        LIMIT :limit
+    """).bindparams(**params)
+
+    rows = db.execute(sql).fetchall()
+    return [dict(r._mapping) for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Real-time - DynamoDB
 # ---------------------------------------------------------------------------
