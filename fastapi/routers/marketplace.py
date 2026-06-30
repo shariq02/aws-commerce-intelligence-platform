@@ -4,7 +4,7 @@
 # Date: June 2026
 # ====================================================================
 # FILE: fastapi/routers/marketplace.py
-# Purpose: 8 marketplace endpoints (2 real-time, 6 analytical)
+# Purpose: 10 marketplace endpoints (2 real-time, 8 analytical)
 # ====================================================================
 
 from fastapi import APIRouter, Depends, Query
@@ -92,5 +92,54 @@ def seller_leaderboard(
         db,
         tier=tier,
         rank_by=rank_by,
+        limit=limit,
+    )
+
+
+@router.get("/analytics/time-to-first-sale")
+def time_to_first_sale(
+    seller_tier: Optional[str] = Query(
+        default=None,
+        description="Filter by seller tier: platinum, gold, standard, new"
+    ),
+    category: Optional[str] = Query(
+        default=None,
+        description="Filter by product category"
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Time elapsed between listing.created and first seller.order.dispatched
+    from mart_time_to_first_sale, aggregated by seller tier and category.
+    Serves use case MK-04.
+    """
+    return marketplace_service.get_time_to_first_sale(
+        db,
+        seller_tier=seller_tier,
+        category=category,
+    )
+
+
+@router.get("/analytics/seller-breach-alerts")
+def seller_breach_alerts(
+    flagged_only: bool = Query(
+        default=True,
+        description="Return only sellers with daily breach_rate above 20%"
+    ),
+    seller_tier: Optional[str] = Query(
+        default=None,
+        description="Filter by seller tier: platinum, gold, standard, new"
+    ),
+    limit: int = Query(default=50, ge=1, le=200, description="Number of records to return"),
+    db: Session = Depends(get_db),
+):
+    """
+    Daily seller SLA breach rate alerts from mart_seller_breach_alerts.
+    Batch reframe of real-time session-window breach alert. Serves use case AD-03.
+    """
+    return marketplace_service.get_seller_breach_alerts(
+        db,
+        flagged_only=flagged_only,
+        seller_tier=seller_tier,
         limit=limit,
     )

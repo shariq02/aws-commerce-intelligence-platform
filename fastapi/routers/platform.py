@@ -4,11 +4,12 @@
 # Date: June 2026
 # ====================================================================
 # FILE: fastapi/routers/platform.py
-# Purpose: 5 platform-wide endpoints (2 real-time, 3 analytical)
+# Purpose: 7 platform-wide endpoints (2 real-time, 5 analytical)
 # ====================================================================
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from typing import Optional
 
 from database.postgres import get_db
 from services import platform_service
@@ -58,3 +59,40 @@ def daily_domain_metrics(
 ):
     """Daily event count and value per domain from acip_gold."""
     return platform_service.get_daily_domain_metrics(db, days=days)
+
+
+@router.get("/analytics/anomaly-rates")
+def anomaly_rates(
+    domain: Optional[str] = Query(
+        default=None,
+        description="Filter by domain: ecommerce, pharmacy, marketplace"
+    ),
+    spikes_only: bool = Query(
+        default=False,
+        description="Return only rows flagged as spike or drop"
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Daily domain event counts with rolling 30-day mean, standard deviation,
+    and spike/drop flags from mart_domain_anomaly_rates.
+    Serves use cases CD-02 (cross-domain anomaly comparison) and
+    AD-01 (order volume spike detection, batch reframe).
+    """
+    return platform_service.get_anomaly_rates(db, domain=domain, spikes_only=spikes_only)
+
+
+@router.get("/analytics/hourly-volume")
+def hourly_volume(
+    domain: Optional[str] = Query(
+        default=None,
+        description="Filter by domain: ecommerce, pharmacy, marketplace"
+    ),
+    db: Session = Depends(get_db),
+):
+    """
+    Transaction count per hour of day (0-23) per domain from
+    mart_hourly_transaction_volume. Batch approximation of real-time
+    hourly tumbling window aggregation. Serves use case CD-04.
+    """
+    return platform_service.get_hourly_volume(db, domain=domain)
