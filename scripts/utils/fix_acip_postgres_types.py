@@ -175,6 +175,29 @@ TYPE_MAP = {
                                   "marketplace_net_revenue",
                                   "marketplace_avg_dispatch_days"],
         },
+        # New marts added June 30, 2026 -- see ADR for use cases MK-04,
+        # CD-02, AD-01, CD-04, AD-03
+        "mart_time_to_first_sale": {
+            "DOUBLE PRECISION": ["time_to_first_sale_mins", "time_to_first_sale_days"],
+        },
+        "mart_domain_anomaly_rates": {
+            "BOOLEAN": ["is_spike", "is_drop"],
+            "BIGINT": ["event_count", "trailing_days_available"],
+            "DOUBLE PRECISION": ["total_value", "rolling_mean", "rolling_std",
+                                  "spike_magnitude"],
+            "DATE": ["metric_date"],
+        },
+        "mart_hourly_transaction_volume": {
+            "INT": ["hour_of_day"],
+            "BIGINT": ["event_count", "domain_total"],
+            "DOUBLE PRECISION": ["pct_of_domain_total"],
+        },
+        "mart_seller_breach_alerts": {
+            "BOOLEAN": ["is_flagged"],
+            "BIGINT": ["total_dispatches", "breach_count"],
+            "DOUBLE PRECISION": ["breach_rate"],
+            "DATE": ["dispatch_date"],
+        },
     },
 }
 
