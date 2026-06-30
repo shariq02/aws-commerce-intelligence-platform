@@ -328,3 +328,134 @@ models:
       - name: overall_urgency_rank
         data_tests:
           - not_null
+
+# ---------------------------------------------------------------------------
+  # NEW MARTS - June 30, 2026 - append these blocks to existing schema.yml
+  # Use cases: MK-04, CD-02, AD-01, CD-04, AD-03
+  # PH-04 dropped -- no region dimension exists for pharmacy in Gold layer
+  # ---------------------------------------------------------------------------
+
+  - name: mart_time_to_first_sale
+    description: >
+      Time elapsed between a marketplace listing.created event and its first
+      seller.order.dispatched event. One row per listing that has both events.
+      Grain: correlation_id (listing identifier).
+      Serves use case MK-04.
+    columns:
+      - name: time_to_sale_key
+        data_tests:
+          - unique
+          - not_null
+      - name: listing_id
+        data_tests:
+          - not_null
+      - name: seller_tier
+        data_tests:
+          - not_null
+      - name: listed_at
+        data_tests:
+          - not_null
+      - name: first_dispatched_at
+        data_tests:
+          - not_null
+      - name: time_to_first_sale_days
+        data_tests:
+          - not_null
+      - name: first_sale_speed_bucket
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['express', 'fast', 'standard', 'slow']
+
+  - name: mart_domain_anomaly_rates
+    description: >
+      Daily event count per domain with rolling 30-day mean, standard
+      deviation, and spike/drop flags (event_count outside mean +/- 2 std).
+      Grain: domain + metric_date.
+      Serves use cases CD-02 (cross-domain anomaly comparison) and
+      AD-01 (order volume spike detection, batch reframe).
+    columns:
+      - name: anomaly_key
+        data_tests:
+          - unique
+          - not_null
+      - name: domain
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['ecommerce', 'pharmacy', 'marketplace']
+      - name: metric_date
+        data_tests:
+          - not_null
+      - name: event_count
+        data_tests:
+          - not_null
+      - name: is_spike
+        data_tests:
+          - not_null
+      - name: is_drop
+        data_tests:
+          - not_null
+
+  - name: mart_hourly_transaction_volume
+    description: >
+      Transaction count per hour of day (0-23) per domain, with each hour's
+      share of total domain volume. Batch approximation of real-time hourly
+      tumbling window aggregation.
+      Grain: domain + hour_of_day.
+      Serves use case CD-04.
+    columns:
+      - name: hourly_volume_key
+        data_tests:
+          - unique
+          - not_null
+      - name: domain
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['ecommerce', 'pharmacy', 'marketplace']
+      - name: hour_of_day
+        data_tests:
+          - not_null
+      - name: event_count
+        data_tests:
+          - not_null
+      - name: time_of_day_bucket
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['morning', 'afternoon', 'evening', 'night']
+
+  - name: mart_seller_breach_alerts
+    description: >
+      Daily SLA breach rate per seller from dispatch events only. Sellers
+      with breach_rate above 20% on a given day are flagged for review.
+      Grain: seller_key + dispatch_date.
+      Serves use case AD-03 (batch reframe of real-time session-window alert).
+    columns:
+      - name: breach_alert_key
+        data_tests:
+          - unique
+          - not_null
+      - name: seller_key
+        data_tests:
+          - not_null
+      - name: dispatch_date
+        data_tests:
+          - not_null
+      - name: total_dispatches
+        data_tests:
+          - not_null
+      - name: breach_rate
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+      - name: is_flagged
+        data_tests:
+          - not_null
+      - name: breach_severity
+        data_tests:
+          - not_null
+          - accepted_values:
+              values: ['normal', 'warning', 'severe']
